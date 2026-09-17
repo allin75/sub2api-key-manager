@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Sub2API Key 用量管理</title>
+  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/overrides.css?v=20260908-1">
+  <script src="/app.js?v=20260908-1" defer></script>
+</head>
+<body>
+  <div class="login-screen" id="loginScreen">
+    <form class="login-card" id="loginForm">
+      <div class="brand-mark">S2</div>
+      <h1>Key 用量管理</h1>
+      <p>输入管理密码进入内部管理页</p>
+      <label for="password">管理密码</label>
+      <input id="password" type="password" required autocomplete="current-password" placeholder="请输入密码">
+      <button class="primary wide" type="submit">登录</button>
+      <div class="form-error" id="loginError"></div>
+    </form>
+  </div>
+
+  <main class="shell hidden" id="app">
+    <header class="topbar">
+      <div class="brand"><div class="brand-mark small">S2</div><div><strong>Sub2API</strong><span>自定义 Key 用量管理</span></div></div>
+      <button class="text-button" id="logoutButton">退出登录</button>
+    </header>
+
+    <section class="hero">
+      <div><p class="eyebrow">KEY MANAGEMENT</p><h1>用量总览</h1><p>只展示并管理你添加到此页面的自定义 Key。</p></div>
+      <div class="hero-actions"><div class="schedule-pill"><span>距自动重置</span><strong id="resetCountdown">--d--h--m</strong></div><button class="secondary" id="refreshButton">刷新数据</button><button class="primary" id="openAddButton">＋ 添加自定义 Key</button></div>
+    </section>
+
+    <div class="notice"><span class="notice-icon">i</span><span><strong>自动重置：</strong>每周一 06:00 自动重置下方已配置 Key 的额度和限速窗口，不影响同一 Sub2API 账号中的其他 Key。</span></div>
+    <section class="usage-summary" id="usageSummary" aria-label="全部 Key 用量汇总"></section>
+    <section class="key-grid" id="keyGrid"><div class="loading">正在读取 Sub2API 数据…</div></section>
+  </main>
+
+  <div class="overlay hidden" id="addOverlay">
+    <form class="modal" id="addForm">
+      <div class="modal-head"><div><h2>添加自定义 Key</h2><p>完整 Key 只用于本次匹配，服务端仅保存不可逆哈希。</p></div><button type="button" class="icon-button" id="closeAddButton" aria-label="关闭">×</button></div>
+      <label for="customKey">自定义 Key</label>
+      <input id="customKey" required autocomplete="off" placeholder="sk-...">
+      <div class="form-error" id="addError"></div>
+      <div class="modal-actions"><button type="button" class="secondary" id="cancelAddButton">取消</button><button type="submit" class="primary">验证并添加</button></div>
+    </form>
+  </div>
+  <div class="overlay hidden" id="quotaOverlay">
+    <form class="modal" id="quotaForm">
+      <div class="modal-head"><div><h2>调整配额</h2><p id="quotaDescription">设置当前 Key 的额度上限，单位为 USD。</p></div><button type="button" class="icon-button" id="closeQuotaButton" aria-label="关闭">×</button></div>
+      <label for="quotaInput">额度上限（USD）</label>
+      <input id="quotaInput" type="number" min="0" max="100000000" step="0.01" required placeholder="0 表示不限制">
+      <div class="form-error" id="quotaError"></div>
+      <div class="modal-actions"><button type="button" class="secondary" id="cancelQuotaButton">取消</button><button type="submit" class="primary">保存配额</button></div>
+    </form>
+  </div>
+
+  <div class="toast" id="toast"></div>
+</body>
+</html>

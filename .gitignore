@@ -1,0 +1,15 @@
+.env
+.env.*
+!.env.example
+data/
+secrets/
+node_modules/
+coverage/
+*.log
+*.pem
+*.key
+*.token
+*.tgz
+*.zip
+.DS_Store
+Thumbs.db

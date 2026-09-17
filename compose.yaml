@@ -1,0 +1,18 @@
+services:
+  key-manager:
+    build: .
+    container_name: sub2api-key-manager
+    restart: unless-stopped
+    ports:
+      - "3100:3000"
+    env_file:
+      - .env
+    volumes:
+      - key-manager-data:/data
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+volumes:
+  key-manager-data:
