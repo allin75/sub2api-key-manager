@@ -8,8 +8,8 @@
 .key-card { transition: border-color .25s, box-shadow .25s; }
 .key-card:hover { border-color: #49739d; box-shadow: 0 10px 32px #0004, 0 0 20px #4aa9ff12; }
 .quota-panel { --quota-color:#57dfc5; --quota-end:#699cff; position:relative; overflow:hidden; padding:14px; background:linear-gradient(120deg,#12243b,#0c1729); border:1px solid #293f59; border-radius:10px; }
-.quota-panel.warning { --quota-color:#f5ce73; --quota-end:#f2a34b; }
-.quota-panel.exhausted { --quota-color:#ff8e9a; --quota-end:#e85c79; }
+.quota-panel.quota-warning { --quota-color:#f5ce73; --quota-end:#f2a34b; }
+.quota-panel.quota-exhausted { --quota-color:#ff8e9a; --quota-end:#e85c79; }
 .quota-panel .quota-row { align-items:center; gap:8px; }
 .quota-amount { display:flex; align-items:baseline; flex-wrap:wrap; gap:8px; margin:12px 0; font-family:ui-monospace,monospace; }
 .quota-amount strong { font-size:22px; color:var(--text); font-variant-numeric:tabular-nums; }
