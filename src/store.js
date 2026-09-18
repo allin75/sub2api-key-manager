@@ -5,7 +5,10 @@ import { hashKey } from './utils.js';
 
 const dataDir = process.env.DATA_DIR || '/data';
 const dataFile = path.join(dataDir, 'state.json');
-const initialState = { version: 2, configuredKeys: [], lastResetAt: null, resetOperation: null };
+export const initialState = { version: 3, configuredKeys: [], lastResetAt: null, resetOperation: null,
+  budget: { limit: null, month: null, ledger: {}, blocked: false, paused: {} },
+  cache: { keys: [], lastSuccessAt: null, lastAttemptAt: null, nextCheckAt: null, error: null },
+  retryAt: null };
 
 let state = structuredClone(initialState);
 let writeQueue = Promise.resolve();
@@ -16,6 +19,11 @@ export async function loadStore() {
     const parsed = JSON.parse(await fs.readFile(dataFile, 'utf8'));
     state = { ...structuredClone(initialState), ...parsed };
     validateState(state);
+    if (parsed.version !== 3) {
+      await fs.copyFile(dataFile, `${dataFile}.v2-backup`);
+      state.version = 3;
+      await persist();
+    }
   } catch (error) {
     if (error.code !== 'ENOENT') throw error;
     await persist();
@@ -24,6 +32,19 @@ export async function loadStore() {
 
 export function getState() {
   return structuredClone(state);
+}
+
+export async function saveState(next) {
+  validateState(next);
+  const snapshot = structuredClone(next);
+  const operation = writeQueue.catch(() => {}).then(async () => {
+    const temporaryFile = `${dataFile}.${process.pid}.tmp`;
+    await fs.writeFile(temporaryFile, JSON.stringify(snapshot, null, 2), { mode: 0o600 });
+    await fs.rename(temporaryFile, dataFile);
+    state = snapshot;
+  });
+  writeQueue = operation;
+  return operation;
 }
 
 export async function addConfiguredKey(customKey) {
@@ -78,4 +99,7 @@ function validateState(value) {
       throw new Error('state.json 中 resetOperation 格式无效');
     }
   }
+  if (!value.budget || (value.budget.limit !== null && (!Number.isFinite(value.budget.limit) || value.budget.limit <= 0))) throw new Error('月度额度配置无效');
+  if (!value.budget.ledger || !value.budget.paused || !value.cache) throw new Error('月度账本配置无效');
+  if (Object.values(value.budget.ledger).some(cost => !Number.isSafeInteger(cost) || cost < 0)) throw new Error('月度费用快照无效');
 }

@@ -1,3 +1,10 @@
+.role-label { font-size:11px; color:var(--muted); }
+.balance-heading { display:flex; align-items:center; justify-content:space-between; margin-bottom:7px; gap:5px; }
+.balance-heading span { margin-bottom:0; }
+.balance-item small { display:block; color:var(--muted); font-size:10px; margin-top:7px; }
+.budget-status { color:#b6cce8; font-size:12px; line-height:1.7; margin-bottom:7px; }
+.budget-blocked { color:#ff9ca5; }
+.sync-status { color:var(--muted); font-size:11px; line-height:1.7; margin-bottom:18px; }
 .key-card { transition: border-color .25s, box-shadow .25s; }
 .key-card:hover { border-color: #49739d; box-shadow: 0 10px 32px #0004, 0 0 20px #4aa9ff12; }
 .quota-panel { --quota-color:#57dfc5; --quota-end:#699cff; position:relative; overflow:hidden; padding:14px; background:linear-gradient(120deg,#12243b,#0c1729); border:1px solid #293f59; border-radius:10px; }

@@ -3,7 +3,7 @@ import { aggregateDailyUsage, dateRanges, hashKey } from './utils.js';
 const baseUrl = (process.env.SUB2API_BASE_URL || 'https://sub2api.yfyf.fun').replace(/\/$/, '');
 const email = process.env.SUB2API_EMAIL || '';
 const password = process.env.SUB2API_PASSWORD || '';
-const timeZone = process.env.TIMEZONE || 'Asia/Shanghai';
+const timeZone = 'Asia/Shanghai';
 const requestTimeoutMs = Number(process.env.UPSTREAM_TIMEOUT_MS || 15000);
 
 let auth = { accessToken: '', expiresAt: 0 };
@@ -44,6 +44,7 @@ async function getAccessToken() {
   const response = await fetch(`${baseUrl}/api/v1/auth/login`, {
     method: 'POST',
     redirect: 'error',
+    signal: AbortSignal.timeout(requestTimeoutMs),
     headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
     body: JSON.stringify({ email, password })
   });
@@ -70,12 +71,14 @@ export async function listAllKeys() {
   let page = 1;
   do {
     const data = await upstream(`/api/v1/keys?page=${page}&page_size=100&sort_by=created_at&sort_order=desc`);
-    const items = Array.isArray(data) ? data : (data.items ?? data.data ?? []);
+    const items = Array.isArray(data) ? data : (data.items ?? data.data);
+    if (!Array.isArray(items)) throw new UpstreamError('Sub2API Key 列表格式无效');
     all.push(...items);
     const pages = Number(data.pages || 1);
     if (page >= pages || !items.length) break;
     page += 1;
   } while (page <= 100);
+  if (page > 100) throw new UpstreamError('Key 列表超过分页上限，请缩小账号范围');
   return all;
 }
 
@@ -86,10 +89,13 @@ export async function getManagedKeys(configuredKeys) {
   return configuredKeys.map(configured => ({ configured, upstream: byHash.get(configured.keyHash) || null }));
 }
 
-export async function getUsageForKey(keyId) {
+export async function getUsageForKey(keyId, now = new Date()) {
   const data = await upstream(`/api/v1/user/api-keys/${keyId}/usage/daily?days=90&timezone=${encodeURIComponent(timeZone)}`);
-  const items = Array.isArray(data) ? data : (data.items ?? data.data ?? []);
-  return aggregateDailyUsage(items, dateRanges(new Date(), timeZone));
+  const items = Array.isArray(data) ? data : (data.items ?? data.data);
+  if (!Array.isArray(items) || items.some(item => !/^\d{4}-\d{2}-\d{2}$/.test(item.date) || item.actual_cost == null || !Number.isFinite(Number(item.actual_cost)) || Number(item.actual_cost)<0)) {
+    throw new UpstreamError('Sub2API 实际消费统计格式无效');
+  }
+  return aggregateDailyUsage(items, dateRanges(now, 'Asia/Shanghai'));
 }
 
 export async function resetKey(keyId) {
@@ -104,6 +110,11 @@ export async function updateKeyQuota(keyId, quota) {
     method: 'PUT',
     body: JSON.stringify({ quota })
   });
+}
+
+export async function updateKeyStatus(keyId, status) {
+  if (!['active','inactive'].includes(status)) throw new Error('Invalid key status');
+  return upstream(`/api/v1/keys/${keyId}`, { method:'PUT', body:JSON.stringify({status}) });
 }
 
 export class UpstreamError extends Error {

@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Sub2API Key 用量管理</title>
   <link rel="stylesheet" href="/styles.css">
-  <link rel="stylesheet" href="/overrides.css?v=20260908-1">
-  <script src="/app.js?v=20260908-1" defer></script>
+  <link rel="stylesheet" href="/overrides.css?v=20260918-1">
+  <script src="/app.js?v=20260918-2" defer></script>
 </head>
 <body>
   <div class="login-screen" id="loginScreen">
@@ -24,16 +24,18 @@
   <main class="shell hidden" id="app">
     <header class="topbar">
       <div class="brand"><div class="brand-mark small">S2</div><div><strong>Sub2API</strong><span>自定义 Key 用量管理</span></div></div>
-      <button class="text-button" id="logoutButton">退出登录</button>
+      <div><span id="roleLabel" class="role-label"></span><button class="text-button" id="logoutButton">退出登录</button></div>
     </header>
 
     <section class="hero">
       <div><p class="eyebrow">KEY MANAGEMENT</p><h1>用量总览</h1><p>只展示并管理你添加到此页面的自定义 Key。</p></div>
-      <div class="hero-actions"><div class="schedule-pill"><span>距自动重置</span><strong id="resetCountdown">--d--h--m</strong></div><button class="secondary" id="refreshButton">刷新数据</button><button class="primary" id="openAddButton">＋ 添加自定义 Key</button></div>
+      <div class="hero-actions"><div class="schedule-pill"><span>距每周重置</span><strong id="resetCountdown">--d--h--m</strong></div><button class="secondary" id="refreshButton">刷新数据</button><button class="primary hidden" id="openAddButton">＋ 添加自定义 Key</button></div>
     </section>
 
-    <div class="notice"><span class="notice-icon">i</span><span><strong>自动重置：</strong>每周一 06:00 自动重置下方已配置 Key 的额度和限速窗口，不影响同一 Sub2API 账号中的其他 Key。</span></div>
+    <div class="notice"><span class="notice-icon">i</span><span><strong>额度规则：</strong>月度余额每月 1 日刷新，耗尽后暂停已配置 Key；单 Key 每周一 06:00 重置，月度停用期间跳过。均按北京时间。</span></div>
     <section class="usage-summary" id="usageSummary" aria-label="全部 Key 用量汇总"></section>
+    <div id="budgetStatus" class="budget-status" role="status"></div>
+    <div id="syncStatus" class="sync-status"></div>
     <section class="key-grid" id="keyGrid"><div class="loading">正在读取 Sub2API 数据…</div></section>
   </main>
 
@@ -56,6 +58,16 @@
     </form>
   </div>
 
-  <div class="toast" id="toast"></div>
+  <div class="overlay hidden" id="budgetOverlay">
+    <form class="modal" id="budgetForm">
+      <div class="modal-head"><div><h2>月度总额度</h2><p>所有已配置 Key 共用；每月 1 日 00:00 刷新余额（北京时间），不结转。设置后立即计入本月已有消费。</p></div><button type="button" class="icon-button" id="closeBudgetButton" aria-label="关闭月度额度">×</button></div>
+      <label for="budgetInput">每月总额度（USD）</label>
+      <input id="budgetInput" type="number" min="0.01" max="100000000" step="0.01" required>
+      <p>降低到已用金额及以下会停用已配置 Key；提高至高于已用金额会恢复本应用因月额度停用的 Key。</p>
+      <div class="form-error" id="budgetError"></div>
+      <div class="modal-actions"><button type="button" class="secondary" id="cancelBudgetButton">取消</button><button type="submit" class="primary" id="saveBudgetButton">保存总额度</button></div>
+    </form>
+  </div>
+  <div class="toast" id="toast" role="status"></div>
 </body>
 </html>
