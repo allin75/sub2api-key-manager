@@ -36,13 +36,17 @@ export function getState() {
 
 // Run once at startup. The original password keeps all pre-upgrade data.
 export async function initializeAccessKeys(secret) {
-  if (state.accessKeys) return;
+  if (state.accessKeys) {
+    if (!state.defaultAccessId) await saveState({...getState(),defaultAccessId:state.accessKeys[0].id});
+    return;
+  }
   await fs.copyFile(dataFile, `${dataFile}.v3-backup`, fs.constants.COPYFILE_EXCL).catch(error => {
     if (error.code !== 'EEXIST') throw error;
   });
   const original = getState();
   const next = structuredClone(initialState);
   next.accessKeys = [{ id: crypto.randomUUID(), secret, previousSecrets: [], ownedHashes: original.configuredKeys.map(key => key.keyHash), state: original }];
+  next.defaultAccessId = next.accessKeys[0].id;
   await saveState(next);
 }
 
@@ -51,13 +55,23 @@ export function scopedStore(id) {
     getState() {
       const entry = state.accessKeys.find(item => item.id === id);
       if (!entry) throw new Error('登录密钥不存在');
-      return structuredClone(entry.state);
+      const snapshot=structuredClone(entry.state);
+      snapshot.budget.externalCredits={};
+      for(const other of state.accessKeys){
+        if(other.id===id)continue;
+        for(const [month,credits] of Object.entries(other.state.budget.credits||{})){
+          snapshot.budget.externalCredits[month]??={};
+          for(const [hash,cost] of Object.entries(credits))snapshot.budget.externalCredits[month][hash]=(snapshot.budget.externalCredits[month][hash]||0)+cost;
+        }
+      }
+      return snapshot;
     },
     async saveState(snapshot) {
       const next = getState();
       const entry = next.accessKeys.find(item => item.id === id);
       if (!entry) throw new Error('登录密钥不存在');
       entry.state = structuredClone(snapshot);
+      delete entry.state.budget.externalCredits;
       entry.ownedHashes = [...new Set([...entry.ownedHashes, ...snapshot.configuredKeys.map(key => key.keyHash)])];
       await saveState(next);
     }
@@ -124,6 +138,7 @@ async function persist() {
 function validateState(value) {
   if (value.accessKeys !== undefined) {
     if (!Array.isArray(value.accessKeys) || !value.accessKeys.length) throw new Error('登录密钥配置无效');
+    if(value.defaultAccessId!==undefined&&!value.accessKeys.some(entry=>entry.id===value.defaultAccessId))throw new Error('默认登录范围无效');
     const ids = new Set(), secrets = new Set(), hashes = new Set();
     for (const entry of value.accessKeys) {
       if (typeof entry.id !== 'string' || !entry.id || ids.has(entry.id) || typeof entry.secret !== 'string' || !entry.secret || secrets.has(entry.secret) || !Array.isArray(entry.previousSecrets) || entry.previousSecrets.some(secret => typeof secret !== 'string') || !Array.isArray(entry.ownedHashes) || !entry.state || entry.state.accessKeys !== undefined) throw new Error('登录密钥配置无效');
@@ -145,4 +160,17 @@ function validateState(value) {
   if (!value.budget || (value.budget.limit !== null && (!Number.isFinite(value.budget.limit) || value.budget.limit <= 0))) throw new Error('月度额度配置无效');
   if (!value.budget.ledger || !value.budget.paused || !value.cache) throw new Error('月度账本配置无效');
   if (Object.values(value.budget.ledger).some(cost => !Number.isSafeInteger(cost) || cost < 0)) throw new Error('月度费用快照无效');
+  const b=value.budget;
+  for(const field of ['weeklyResetEnabled','monthlyResetEnabled'])if(b[field]!==undefined&&typeof b[field]!=='boolean')throw new Error('刷新开关无效');
+  if(b.weeklyNotBefore!==undefined&&!Number.isFinite(Date.parse(b.weeklyNotBefore)))throw new Error('周刷新起点无效');
+  if(b.cycleMonth!==undefined&&!/^\d{4}-(0[1-9]|1[0-2])$/.test(b.cycleMonth))throw new Error('额度周期无效');
+  if(b.type!==undefined&&!['monthly','trial'].includes(b.type))throw new Error('额度类型无效');
+  if(b.type==='trial'&&!Number.isFinite(Date.parse(b.trialStartedAt)))throw new Error('体验额度起点无效');
+  if(b.rawLedger&&Object.values(b.rawLedger).some(cost=>!Number.isSafeInteger(cost)||cost<0))throw new Error('实际费用快照无效');
+  if(b.rewards&&(!Array.isArray(b.rewards)||b.rewards.some(r=>typeof r.id!=='string'||!Number.isFinite(r.limit)||r.limit<=0||!Number.isSafeInteger(r.used)||r.used<0||!Number.isFinite(Date.parse(r.startsAt))||!Number.isFinite(Date.parse(r.expiresAt))||r.expiresAt<=r.startsAt)))throw new Error('奖励账本无效');
+  if(b.records&&Object.entries(b.records).some(([id,r])=>id!==r.id||typeof r.keyHash!=='string'||!Number.isFinite(Date.parse(r.at))||!Number.isSafeInteger(r.cost)||r.cost<0))throw new Error('消费明细账本无效');
+  if(b.tracking&&Object.values(b.tracking).some(t=>!Number.isSafeInteger(t.apiKeyId)||!Number.isFinite(Date.parse(t.from))||(t.until&&!Number.isFinite(Date.parse(t.until)))||!Array.isArray(t.windows)||t.windows.some(w=>!Number.isFinite(Date.parse(w.from))||(w.until&&(!Number.isFinite(Date.parse(w.until))||w.until<w.from)))))throw new Error('消费追踪窗口无效');
+  if(b.rawAnchors&&Object.values(b.rawAnchors).some(a=>!Number.isFinite(Date.parse(a.at))||!Number.isSafeInteger(a.cost)||a.cost<0))throw new Error('实际消费基线无效');
+  if(value.orderVersion!==undefined&&(!Number.isSafeInteger(value.orderVersion)||value.orderVersion<0))throw new Error('排序版本无效');
+  if(value.accessOrderVersion!==undefined&&(!Number.isSafeInteger(value.accessOrderVersion)||value.accessOrderVersion<0))throw new Error('登录密钥排序版本无效');
 }

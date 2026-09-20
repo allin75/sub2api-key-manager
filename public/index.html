@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Sub2API Key 用量管理</title>
   <link rel="stylesheet" href="/styles.css">
-  <link rel="stylesheet" href="/overrides.css?v=20260920-1">
-  <script src="/app.js?v=20260920-1" defer></script>
+  <link rel="stylesheet" href="/overrides.css?v=20260920-2">
+  <script src="/app.js?v=20260920-2" defer></script>
 </head>
 <body>
   <div class="login-screen" id="loginScreen">
@@ -28,7 +28,7 @@
     </header>
 
     <section class="access-management hidden" id="accessManagement" aria-label="登录密钥管理">
-      <div class="access-heading"><div><p class="eyebrow">ACCESS KEYS</p><h1>登录密钥管理</h1><p>每条登录密钥独立管理 API Key 和月度额度。</p></div><button class="primary" id="newAccessButton">＋ 新增登录密钥</button></div>
+      <div class="access-heading"><div><p class="eyebrow">ACCESS KEYS</p><h1>登录密钥管理</h1><p>独立额度与临时奖励 · 拖动卡片把手调整顺序。</p></div><button class="primary" id="newAccessButton">＋ 新增登录密钥</button></div>
       <div class="access-totals" id="accessTotals"></div>
       <label class="access-search-label" for="accessSearch">查找登录密钥</label>
       <input class="access-search" id="accessSearch" type="search" placeholder="搜索当前或曾用密钥" autocomplete="off">
@@ -41,10 +41,11 @@
       <div class="hero-actions"><div class="schedule-pill"><span>距每周重置</span><strong id="resetCountdown">--d--h--m</strong></div><button class="secondary" id="refreshButton">刷新数据</button><button class="primary hidden" id="openAddButton">＋ 添加自定义 Key</button></div>
     </section>
 
-    <div class="notice"><span class="notice-icon">i</span><span><strong>额度规则：</strong>月度余额每月 1 日刷新，耗尽后暂停已配置 Key；单 Key 每周一 06:00 重置，月度停用期间跳过。均按北京时间。</span></div>
+    <div class="notice"><span class="notice-icon">i</span><span><strong>额度规则：</strong>周刷新重置 API Key 用量，月刷新恢复账号总额度，可在账号卡片独立开关；体验额度不自动刷新。有效奖励优先抵扣，不计入原额度；发奖不会启用已停用的 Key。用量统计展示实际消费，含奖励消费。</span></div>
     <section class="usage-summary" id="usageSummary" aria-label="全部 Key 用量汇总"></section>
     <div id="budgetStatus" class="budget-status" role="status"></div>
     <div id="syncStatus" class="sync-status"></div>
+    <section class="reward-panel" aria-label="临时奖励"><div class="reward-heading"><h2>临时奖励</h2><button class="secondary hidden" id="openRewardButton">＋ 发放奖励</button></div><div id="rewardList"></div></section>
     <section class="key-grid" id="keyGrid"><div class="loading">正在读取 Sub2API 数据…</div></section>
   </main>
 
@@ -69,10 +70,11 @@
 
   <div class="overlay hidden" id="budgetOverlay">
     <form class="modal" id="budgetForm">
-      <div class="modal-head"><div><h2>月度总额度</h2><p>当前登录密钥关联的 API Key 共用；每月 1 日 00:00 刷新余额（北京时间），不结转。设置后立即计入本月已有消费。</p></div><button type="button" class="icon-button" id="closeBudgetButton" aria-label="关闭月度额度">×</button></div>
-      <label for="budgetInput">每月总额度（USD）</label>
+      <div class="modal-head"><div><h2>原额度设置</h2><p>月度额度按账号卡片的月刷新开关执行，关闭时已用量持续累计；切换为体验额度从切换时计费，不自动刷新。调整同类型金额不会清零已用。</p></div><button type="button" class="icon-button" id="closeBudgetButton" aria-label="关闭额度设置">×</button></div>
+      <label for="budgetType">额度类型</label><select id="budgetType"><option value="monthly">月度额度</option><option value="trial">一次性体验额度</option></select>
+      <label for="budgetInput">总额度（USD）</label>
       <input id="budgetInput" type="number" min="0.01" max="100000000" step="0.01" required>
-      <p>降低到已用金额及以下会停用已配置 Key；提高至高于已用金额会恢复本应用因月额度停用的 Key。</p>
+      <p>原额度用尽且无有效奖励时停用已配置 Key；提高到已用金额以上，可恢复本应用因原额度停用的 Key。</p>
       <div class="form-error" id="budgetError"></div>
       <div class="modal-actions"><button type="button" class="secondary" id="cancelBudgetButton">取消</button><button type="submit" class="primary" id="saveBudgetButton">保存总额度</button></div>
     </form>
@@ -82,7 +84,7 @@
       <div class="modal-head"><div><h2 id="accessTitle">新增登录密钥</h2><p id="accessDescription"></p></div><button type="button" class="icon-button" id="closeAccessButton" aria-label="关闭登录密钥设置">×</button></div>
       <label for="accessSecret">登录密钥</label>
       <input id="accessSecret" type="text" required maxlength="128" autocomplete="off" spellcheck="false">
-      <div id="accessLimitField"><label for="accessLimit">每月总额度（USD）</label><input id="accessLimit" type="number" min="0.01" max="100000000" step="0.01"></div>
+      <div id="accessLimitField"><label for="accessType">额度类型</label><select id="accessType"><option value="monthly">月度额度</option><option value="trial">一次性体验额度（不刷新）</option></select><label for="accessLimit">总额度（USD）</label><input id="accessLimit" type="number" min="0.01" max="100000000" step="0.01"></div>
       <div class="form-error" id="accessError" role="alert"></div>
       <div class="modal-actions"><button type="button" class="secondary" id="cancelAccessButton">取消</button><button type="submit" class="primary" id="saveAccessButton">保存</button></div>
     </form>
@@ -97,6 +99,14 @@
       <div class="modal-actions"><button type="button" class="secondary" id="cancelTransferButton">取消</button><button type="submit" class="primary" id="saveTransferButton">转移关联</button></div>
     </form>
   </div>
+  <div class="overlay hidden" id="rewardOverlay"><form class="modal" id="rewardForm">
+    <div class="modal-head"><div><h2>发放临时奖励</h2><p>同一个 Key 的消费优先扣奖励；不计入原额度，不自动启用已停用 Key。</p></div><button type="button" class="icon-button" id="closeRewardButton" aria-label="关闭奖励设置">×</button></div>
+    <label for="rewardAmount">奖励金额（USD）</label><input id="rewardAmount" type="number" min="0.01" max="100000000" step="0.01" required>
+    <label for="rewardExpiry">到期时间（本机时区）</label><input id="rewardExpiry" type="datetime-local" required>
+    <p>有效期从保存时开始；用完或到期结束，未用部分不结转。每次只能有一份有效奖励。</p>
+    <div class="form-error" id="rewardError" role="alert"></div>
+    <div class="modal-actions"><button type="button" class="secondary" id="cancelRewardButton">取消</button><button type="submit" class="primary" id="saveRewardButton">发放奖励</button></div>
+  </form></div>
   <div class="toast" id="toast" role="status"></div>
 </body>
 </html>

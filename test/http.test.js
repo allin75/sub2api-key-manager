@@ -7,16 +7,50 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
+test('usage detail pagination validates upstream data, deduplicates and respects exact time boundaries',async()=>{
+  const valid={id:1,api_key_id:7,created_at:'2026-09-20T01:00:00Z',actual_cost:2};
+  let payloads=[{items:[valid],pages:2},{items:[valid,{...valid,id:2,created_at:'2026-09-20T02:00:00Z'}],pages:2}];
+  const mock=http.createServer((req,res)=>{
+    res.setHeader('Content-Type','application/json');
+    if(req.url==='/api/v1/auth/login')return res.end(JSON.stringify({access_token:'mock',expires_in:3600}));
+    const url=new URL(req.url,'http://localhost');
+    assert.equal(url.searchParams.get('api_key_id'),'7');
+    assert.equal(url.searchParams.get('sort_by'),'id');
+    assert.equal(url.searchParams.get('sort_order'),'asc');
+    res.end(JSON.stringify({data:payloads[Number(url.searchParams.get('page'))-1]}));
+  });
+  mock.listen(0,'127.0.0.1');await once(mock,'listening');
+  const prior={...process.env};
+  try{
+    process.env.SUB2API_BASE_URL=`http://127.0.0.1:${mock.address().port}`;
+    process.env.SUB2API_EMAIL='mock@example.invalid';process.env.SUB2API_PASSWORD='mock';
+    const upstream=await import(`../src/sub2api.js?pagination=${Date.now()}`);
+    const read=()=>upstream.getUsageRecords(7,'2026-09-20T01:00:00.000Z','2026-09-20T02:00:00.000Z');
+    assert.deepEqual(await read(),[{id:'1',apiKeyId:7,at:'2026-09-20T01:00:00.000Z',cost:2}]);
+    for(const bad of [{...valid,api_key_id:8},{...valid,actual_cost:null},{...valid,actual_cost:-1},{...valid,created_at:'invalid'}]){
+      payloads=[{items:[bad],pages:1}];await assert.rejects(read());
+    }
+    for(const bad of [{items:[],pages:2},{items:[],pages:1001},{items:[],pages:'1'}]){
+      payloads=[bad];await assert.rejects(read());
+    }
+  }finally{
+    for(const key of ['SUB2API_BASE_URL','SUB2API_EMAIL','SUB2API_PASSWORD']){if(prior[key]===undefined)delete process.env[key];else process.env[key]=prior[key];}
+    mock.closeAllConnections();await new Promise(resolve=>mock.close(resolve));
+  }
+});
+
 test('HTTP roles, CSRF, cache, and budget enforcement through mock Sub2API',async()=>{
   const directory=await fs.mkdtemp(path.join(os.tmpdir(),'budget-http-'));
   const key={id:1,key:'sk-test-only-123456789012',name:'Mock',status:'active',quota:100,quota_used:4};
   const otherKey={id:2,key:'sk-second-only-123456789012',name:'Second mock',status:'active',quota:100,quota_used:2};
   const upstreamKeys=[key,otherKey];
+  const usageRecords=[];
   let loginCount=0,readCount=0,failSecondUsageAfter=null;
   const mock=http.createServer(async(req,res)=>{
     let raw='';for await(const c of req)raw+=c;const body=JSON.parse(raw||'{}');let data;
     if(req.url==='/api/v1/auth/login'){loginCount++;data={access_token:'test-token',expires_in:3600};}
     else if(req.url.startsWith('/api/v1/keys?')){readCount++;data={items:upstreamKeys,pages:1};}
+    else if(req.url.startsWith('/api/v1/usage?')){const url=new URL(req.url,'http://localhost');data={items:usageRecords.filter(r=>r.api_key_id===Number(url.searchParams.get('api_key_id'))),pages:1};}
     else if(/^\/api\/v1\/user\/api-keys\/[12]\/usage\/daily/.test(req.url)){
       if(req.url.includes('/api-keys/2/')&&failSecondUsageAfter!==null&&--failSecondUsageAfter===0){failSecondUsageAfter=null;res.writeHead(503);res.end('{}');return;}
       const today=new Date(Date.now()+8*3600000).toISOString().slice(0,10);
@@ -136,6 +170,51 @@ test('HTTP roles, CSRF, cache, and budget enforcement through mock Sub2API',asyn
     assert.equal(otherKey.status,'inactive');assert.equal(key.status,'active');
     const restoredView=await (await request('/api/keys','GET',undefined,secondRenamed)).json();
     assert.equal(restoredView.budget.used,10);assert.equal(restoredView.budget.error,null);
+    const ordering=await (await request('/api/access-keys','GET',undefined,superadmin)).json();
+    const reverse=ordering.accessKeys.map(entry=>entry.id).reverse();
+    assert.equal((await request('/api/access-keys/order','PUT',{ids:reverse,version:ordering.orderVersion},renamedSession)).status,403);
+    assert.equal((await request('/api/access-keys/order','PUT',{ids:reverse,version:ordering.orderVersion},superadmin)).status,200);
+    assert.equal((await request('/api/access-keys/order','PUT',{ids:reverse,version:ordering.orderVersion},superadmin)).status,409);
+    assert.equal((await (await request('/api/keys','GET',undefined,superadmin)).json()).keys[0].id,id);
+    assert.equal((await request(scoped('/api/keys/order'),'PUT',{ids:[],version:0},renamedSession)).status,403);
+    const reward={limit:40,expiresAt:new Date(Date.now()+86400000).toISOString()};
+    assert.equal((await request('/api/rewards','POST',reward,renamedSession)).status,403);
+    assert.equal((await request('/api/rewards','POST',reward,superadmin,false)).status,403);
+    const rewarded=await request('/api/rewards','POST',reward,superadmin);
+    assert.equal(rewarded.status,201);assert.equal((await rewarded.json()).rewards[0].used,0);
+    assert.equal((await request('/api/rewards','POST',reward,superadmin)).status,409);
+    assert.equal((await request('/api/access-keys','POST',{secret:'trial-only',limit:10,type:'trial'},superadmin)).status,201);
+    const trialSession=await login('trial-only');
+    const trialView=await (await request('/api/keys','GET',undefined,trialSession)).json();
+    assert.equal(trialView.budget.type,'trial');assert.equal(trialView.schedule,null);
+    assert.equal((await request(`/api/keys/${id}/transfer`,'POST',{accessKeyId:trialSession.accessKey.id},superadmin)).status,409);
+    const eventAt=new Date().toISOString();
+    usageRecords.push({id:101,api_key_id:1,created_at:eventAt,actual_cost:12});
+    await new Promise(resolve=>setTimeout(resolve,5));
+    const settled=await (await request('/api/budget','PUT',{limit:100},superadmin)).json();
+    assert.equal(settled.rewards[0].used,12);assert.equal(settled.budget.used,50);
+    assert.equal((await request(`/api/keys/${id}/transfer`,'POST',{accessKeyId:secondId},superadmin)).status,200);
+    let moved=await (await request(scoped('/api/keys'),'GET',undefined,superadmin)).json();
+    assert.equal(moved.budget.used,60);
+    usageRecords.push({id:102,api_key_id:1,created_at:eventAt,actual_cost:5});
+    await request('/api/budget','PUT',{limit:100},superadmin);
+    moved=await (await request(scoped('/api/budget'),'PUT',{limit:100},superadmin)).json();
+    assert.equal(moved.budget.used,60,'late source reward consumption must not charge the destination');
+    const historicalReward=await (await request('/api/keys','GET',undefined,superadmin)).json();
+    assert.equal(historicalReward.budget.used,0);assert.equal(historicalReward.rewards[0].used,17);
+    assert.equal((await request(scoped(`/api/keys/${id}/transfer`),'POST',{accessKeyId:accessKeys[0].id},superadmin)).status,200);
+    const returned=await (await request('/api/keys','GET',undefined,superadmin)).json();
+    assert.equal(returned.budget.used,50);assert.equal(returned.rewards[0].used,17);
+    assert.equal((await request('/api/refresh-policy','PUT',{weeklyResetEnabled:false},renamedSession)).status,403);
+    assert.equal((await request('/api/refresh-policy','PUT',{weeklyResetEnabled:false},superadmin,false)).status,403);
+    assert.equal((await request('/api/refresh-policy','PUT',{weeklyResetEnabled:'false'},superadmin)).status,400);
+    const switched=await (await request('/api/refresh-policy','PUT',{weeklyResetEnabled:false,monthlyResetEnabled:false},superadmin)).json();
+    assert.equal(switched.budget.used,50);assert.equal(switched.budget.weeklyResetEnabled,false);assert.equal(switched.budget.monthlyResetEnabled,false);
+    assert.equal(switched.schedule,null);assert.equal(switched.budget.nextMonthAt,null);
+    const otherPolicy=await (await request(scoped('/api/keys'),'GET',undefined,superadmin)).json();
+    assert.equal(otherPolicy.budget.weeklyResetEnabled,true);assert.equal(otherPolicy.budget.monthlyResetEnabled,true);
+    const policyState=JSON.parse(await fs.readFile(path.join(directory,'state.json'),'utf8'));
+    assert.equal(policyState.accessKeys.find(e=>e.id===accessKeys[0].id).state.budget.monthlyResetEnabled,false);
     const raw=await fs.readFile(path.join(directory,'state.json'),'utf8');assert.ok(!raw.includes(key.key));
     assert.ok(!raw.includes(otherKey.key));
   }finally{

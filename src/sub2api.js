@@ -105,6 +105,26 @@ export async function resetKey(keyId) {
   });
 }
 
+export async function getUsageRecords(keyId, start, end) {
+  const startDate = new Date(Date.parse(start) + 8 * 3600000).toISOString().slice(0,10);
+  const endDate = new Date(Date.parse(end) + 8 * 3600000).toISOString().slice(0,10);
+  const records = new Map();
+  // Bound each scan and fail closed rather than accept an incomplete ledger.
+  for (let page = 1; page <= 1000; page++) {
+    const query = new URLSearchParams({api_key_id:String(keyId), start_date:startDate, end_date:endDate, timezone:timeZone, page:String(page), page_size:'100', sort_by:'id', sort_order:'asc'});
+    const data = await upstream(`/api/v1/usage?${query}`);
+    if (!Array.isArray(data.items) || !Number.isSafeInteger(data.pages) || data.pages < 0 || data.pages > 1000) throw new UpstreamError('用量明细分页无效或超过安全处理上限');
+    for (const item of data.items) {
+      if (!Number.isSafeInteger(item.id) || item.id <= 0 || item.api_key_id !== keyId || !Number.isFinite(Date.parse(item.created_at)) || typeof item.actual_cost !== 'number' || !Number.isFinite(item.actual_cost) || item.actual_cost < 0) throw new UpstreamError('用量明细格式无效');
+      const at = new Date(item.created_at).toISOString();
+      if (at >= start && at < end) records.set(String(item.id), {id:String(item.id),apiKeyId:keyId,at,cost:item.actual_cost});
+    }
+    if (page >= data.pages) return [...records.values()];
+    if (!data.items.length) throw new UpstreamError('用量明细分页不完整');
+  }
+  throw new UpstreamError('用量明细超过单次安全处理上限');
+}
+
 export async function updateKeyQuota(keyId, quota) {
   return upstream(`/api/v1/keys/${keyId}`, {
     method: 'PUT',
