@@ -102,6 +102,7 @@ function enterApp(session) {
   elements.accessSearch.value='';
   elements.openAddButton.classList.toggle('hidden',state.role!=='superadmin');
   elements.openRewardButton.classList.toggle('hidden',state.role!=='superadmin');
+  elements.rewardList.closest('.reward-panel').classList.add('hidden');
   elements.loginScreen.classList.add('hidden');
   elements.app.classList.remove('hidden');
   loadKeys();
@@ -314,6 +315,7 @@ async function api(url, options={}) {
 
 function renderRewards(){
   const rewards=state.rewards;
+  elements.rewardList.closest('.reward-panel').classList.toggle('hidden',state.role!=='superadmin'&&!rewards.length);
   elements.openRewardButton.disabled=rewards.some(r=>r.status==='active');
   elements.rewardList.innerHTML=rewards.length?[...rewards].reverse().map(r=>`<article class="reward-item"><div><strong>奖励已用 ${money(r.used)} / ${money(r.limit)}</strong><span>${r.status==='active'?'可用':r.status==='exhausted'?'已用完':'已到期'}</span></div><progress max="${r.limit}" value="${Math.min(r.used,r.limit)}" aria-label="奖励使用进度"></progress><small>${formatTime(r.startsAt)} 发放 · ${formatTime(r.expiresAt)} 到期${r.status==='active'?` · 剩余 ${money(r.remaining)}`:''}</small></article>`).join(''):'<p class="access-empty">暂无奖励。奖励消费单独记录，不占用原额度。</p>';
 }
@@ -323,12 +325,18 @@ function mountSort(container,ids,kind,disabled=false){
   cards.forEach((card,index)=>{
     card.dataset.sortId=ids[index];
     if(disabled||ids.length<2)return;
-    const bar=document.createElement('div');bar.className='sort-controls';
-    bar.innerHTML=`<button type="button" class="sort-handle" aria-label="拖动调整卡片顺序">⠿ 拖动排序</button><button type="button" class="sort-up" aria-label="上移卡片" ${index===0?'disabled':''}>↑</button><button type="button" class="sort-down" aria-label="下移卡片" ${index===ids.length-1?'disabled':''}>↓</button>`;
-    card.prepend(bar);
+    const handle=card.querySelector(kind==='access'?'.access-card-heading':'.key-title');
+    if(!handle)return;
+    handle.classList.add('card-drag-region');
+    handle.tabIndex=0;
+    handle.setAttribute('aria-label','卡片标题，按 Alt 加上下方向键调整顺序');
     const move=delta=>{const next=[...ids];[next[index],next[index+delta]]=[next[index+delta],next[index]];saveOrder(kind,next);};
-    bar.querySelector('.sort-up').addEventListener('click',()=>move(-1));bar.querySelector('.sort-down').addEventListener('click',()=>move(1));
-    const handle=bar.querySelector('.sort-handle');
+    handle.addEventListener('keydown',event=>{
+      if(!event.altKey||!['ArrowUp','ArrowDown'].includes(event.key))return;
+      event.preventDefault();
+      const delta=event.key==='ArrowUp'?-1:1;
+      if(index+delta>=0&&index+delta<ids.length)move(delta);
+    });
     handle.addEventListener('pointerdown',event=>{
       if(event.button!==0||state.sorting||state.policySaving)return;event.preventDefault();state.sorting=true;state.loadVersion++;
       card.classList.add('sort-dragging');handle.setPointerCapture(event.pointerId);

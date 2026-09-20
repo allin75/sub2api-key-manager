@@ -6,9 +6,8 @@
 .reward-item span { color:#c8adff; }
 .reward-item progress { width:100%; height:8px; accent-color:#b193ff; margin:10px 0; }
 .reward-item small { color:var(--muted); line-height:1.8; }
-.sort-controls { display:flex; align-items:center; gap:6px; margin-bottom:12px; }
-.sort-controls button { background:#172641; color:var(--muted); border:1px solid #334d75; padding:7px 10px; font-size:11px; }
-.sort-handle { cursor:grab; touch-action:none; margin-right:auto; user-select:none; }
+.card-drag-region { cursor:grab; touch-action:none; user-select:none; }
+.card-drag-region:focus-visible { outline:2px solid var(--blue); outline-offset:4px; border-radius:4px; }
 .sort-dragging { outline:2px solid var(--blue); opacity:.8; }
 .access-management { margin-bottom:30px; }
 .access-heading { display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:20px; }
