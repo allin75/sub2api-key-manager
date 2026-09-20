@@ -47,7 +47,7 @@ export class KeyManager {
     s.cache.lastAttemptAt=now.toISOString();
     await this.save(s);
     try {
-      const all=await this.upstream.listAllKeys();
+      const all=s.configuredKeys.length || Object.keys(s.budget.paused).length ? await this.upstream.listAllKeys() : [];
       const byHash=new Map(all.map(k=>[hashKey(String(k.key||'')),k]));
       const rows=[],ledger={...s.budget.ledger};
       // Sequential reads cap upstream concurrency at one, including login and writes.
@@ -118,7 +118,9 @@ export class KeyManager {
     if(s.budget.limit<=0)throw new ManagerError('月度总额度最少为 $0.01');
     await this.save(s);await this.sync(s);return this.view();
   });}
-  add(customKey){return this.exclusive(async()=>{
+  add(customKey){return this.exclusive(()=>this.addNow(customKey));}
+  // Caller must hold the shared operation queue, including cross-scope ownership checks.
+  async addNow(customKey){
     if(typeof customKey!=='string'||!/^[A-Za-z0-9_-]{16,256}$/.test(customKey.trim()))throw new ManagerError('Key 格式无效');
     const key=customKey.trim(),hash=hashKey(key),s=this.store.getState();
     if(s.configuredKeys.some(c=>c.keyHash===hash))return {created:false,...this.view()};
@@ -127,7 +129,7 @@ export class KeyManager {
     const tracked=s.budget.paused[hash];
     s.configuredKeys.push(tracked?{id:tracked.id,keyHash:hash,maskedKey:tracked.maskedKey,addedAt:tracked.addedAt}:{id:crypto.randomUUID(),keyHash:hash,maskedKey:maskKey(key),addedAt:this.clock().toISOString()});
     await this.save(s);await this.sync(s);return {created:true,...this.view()};
-  });}
+  }
   remove(id){return this.exclusive(async()=>{
     const s=this.store.getState(),c=s.configuredKeys.find(k=>k.id===id);
     if(!c)throw new ManagerError('Key 不存在',404);

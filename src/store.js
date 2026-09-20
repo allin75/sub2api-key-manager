@@ -34,6 +34,36 @@ export function getState() {
   return structuredClone(state);
 }
 
+// Run once at startup. The original password keeps all pre-upgrade data.
+export async function initializeAccessKeys(secret) {
+  if (state.accessKeys) return;
+  await fs.copyFile(dataFile, `${dataFile}.v3-backup`, fs.constants.COPYFILE_EXCL).catch(error => {
+    if (error.code !== 'EEXIST') throw error;
+  });
+  const original = getState();
+  const next = structuredClone(initialState);
+  next.accessKeys = [{ id: crypto.randomUUID(), secret, previousSecrets: [], ownedHashes: original.configuredKeys.map(key => key.keyHash), state: original }];
+  await saveState(next);
+}
+
+export function scopedStore(id) {
+  return {
+    getState() {
+      const entry = state.accessKeys.find(item => item.id === id);
+      if (!entry) throw new Error('登录密钥不存在');
+      return structuredClone(entry.state);
+    },
+    async saveState(snapshot) {
+      const next = getState();
+      const entry = next.accessKeys.find(item => item.id === id);
+      if (!entry) throw new Error('登录密钥不存在');
+      entry.state = structuredClone(snapshot);
+      entry.ownedHashes = [...new Set([...entry.ownedHashes, ...snapshot.configuredKeys.map(key => key.keyHash)])];
+      await saveState(next);
+    }
+  };
+}
+
 export async function saveState(next) {
   validateState(next);
   const snapshot = structuredClone(next);
@@ -92,6 +122,19 @@ async function persist() {
 }
 
 function validateState(value) {
+  if (value.accessKeys !== undefined) {
+    if (!Array.isArray(value.accessKeys) || !value.accessKeys.length) throw new Error('登录密钥配置无效');
+    const ids = new Set(), secrets = new Set(), hashes = new Set();
+    for (const entry of value.accessKeys) {
+      if (typeof entry.id !== 'string' || !entry.id || ids.has(entry.id) || typeof entry.secret !== 'string' || !entry.secret || secrets.has(entry.secret) || !Array.isArray(entry.previousSecrets) || entry.previousSecrets.some(secret => typeof secret !== 'string') || !Array.isArray(entry.ownedHashes) || !entry.state || entry.state.accessKeys !== undefined) throw new Error('登录密钥配置无效');
+      ids.add(entry.id); secrets.add(entry.secret);
+      for (const hash of new Set([...entry.ownedHashes, ...entry.state.configuredKeys.map(key => key.keyHash), ...Object.keys(entry.state.budget.paused)])) {
+        if (hashes.has(hash)) throw new Error('API Key 不可关联多个登录密钥');
+        hashes.add(hash);
+      }
+      validateState(entry.state);
+    }
+  }
   if (!Array.isArray(value.configuredKeys)) throw new Error('state.json 中 configuredKeys 格式无效');
   if (value.lastResetAt && !Number.isFinite(new Date(value.lastResetAt).getTime())) throw new Error('state.json 中 lastResetAt 格式无效');
   if (value.resetOperation) {

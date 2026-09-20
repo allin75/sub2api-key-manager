@@ -1,8 +1,37 @@
-const state = { csrfToken: '', keys: [], schedule: null, budget:null, role:'admin' };
+const state = { csrfToken: '', keys: [], schedule: null, budget:null, role:'admin', accessKey:null, accessKeys:[], selectedAccessId:'', loadVersion:0 };
 const elements = Object.fromEntries(['loginScreen','loginForm','loginError','password','app','logoutButton','refreshButton','resetCountdown','openAddButton','usageSummary','keyGrid','addOverlay','addForm','customKey','addError','closeAddButton','cancelAddButton','quotaOverlay','quotaForm','quotaInput','quotaError','quotaDescription','closeQuotaButton','cancelQuotaButton','toast'].map(id => [id, document.getElementById(id)]));
 
-boot();
 for(const id of ['roleLabel','budgetStatus','syncStatus','budgetOverlay','budgetForm','budgetInput','budgetError','closeBudgetButton','cancelBudgetButton','saveBudgetButton']) elements[id]=document.getElementById(id);
+for(const id of ['accessManagement','accessTotals','accessSearch','accessList','currentAccess','changeSecretButton','newAccessButton','accessOverlay','accessForm','accessTitle','accessDescription','accessSecret','accessLimitField','accessLimit','accessError','closeAccessButton','cancelAccessButton','saveAccessButton','addDescription']) elements[id]=document.getElementById(id);
+for(const id of ['transferOverlay','transferForm','transferDescription','transferTarget','transferError','closeTransferButton','cancelTransferButton','saveTransferButton']) elements[id]=document.getElementById(id);
+let transferKeyId='';
+elements.closeTransferButton.addEventListener('click',closeTransfer);
+elements.cancelTransferButton.addEventListener('click',closeTransfer);
+elements.transferOverlay.addEventListener('click',event=>{if(event.target===elements.transferOverlay)closeTransfer()});
+elements.transferForm.addEventListener('submit',async event=>{
+  event.preventDefault();elements.transferError.textContent='';setBusy(elements.saveTransferButton,true,'转移中…');
+  try {
+    const result=await api(`/api/keys/${encodeURIComponent(transferKeyId)}/transfer`,{method:'POST',body:{accessKeyId:elements.transferTarget.value}});
+    closeTransfer();await loadKeys();toast(result.pendingSync?'关联已转移，额度状态待同步':'关联和本月用量已转移');
+  }catch(error){elements.transferError.textContent=error.message;}
+  finally{setBusy(elements.saveTransferButton,false,'转移关联');}
+});
+function closeTransfer(){elements.transferOverlay.classList.add('hidden');elements.transferForm.reset();elements.transferError.textContent='';transferKeyId='';}
+function openTransfer(id){
+  transferKeyId=id;
+  const key=state.keys.find(item=>item.id===id);
+  elements.transferDescription.textContent=`将“${key?.name||'API Key'}”从当前登录密钥转移到另一条登录密钥。`;
+  elements.transferTarget.innerHTML=state.accessKeys.filter(entry=>entry.id!==state.selectedAccessId).map(entry=>`<option value="${entry.id}">${escapeHtml(entry.secret)}</option>`).join('');
+  elements.transferError.textContent='';elements.transferOverlay.classList.remove('hidden');elements.transferTarget.focus();
+}
+let editingAccessId=null;
+elements.newAccessButton.addEventListener('click',()=>openAccess());
+elements.changeSecretButton.addEventListener('click',()=>openAccess(state.accessKey));
+elements.closeAccessButton.addEventListener('click',closeAccess);
+elements.cancelAccessButton.addEventListener('click',closeAccess);
+elements.accessOverlay.addEventListener('click',event=>{if(event.target===elements.accessOverlay)closeAccess()});
+elements.accessForm.addEventListener('submit',saveAccess);
+elements.accessSearch.addEventListener('input',renderAccessKeys);
 elements.closeBudgetButton.addEventListener('click',closeBudget);
 elements.cancelBudgetButton.addEventListener('click',closeBudget);
 elements.budgetOverlay.addEventListener('click',event=>{if(event.target===elements.budgetOverlay)closeBudget()});
@@ -29,7 +58,7 @@ elements.logoutButton.addEventListener('click', async () => {
   try { await api('/api/logout', { method:'POST' }); } finally { state.csrfToken=''; showLogin(); }
 });
 elements.refreshButton.addEventListener('click', () => loadKeys(true));
-elements.openAddButton.addEventListener('click', () => { elements.addOverlay.classList.remove('hidden'); elements.customKey.focus(); });
+elements.openAddButton.addEventListener('click', () => { elements.addDescription.textContent=`关联到登录密钥“${currentAccess()?.secret||''}”；完整 API Key 仅用于验证。`; elements.addOverlay.classList.remove('hidden'); elements.customKey.focus(); });
 elements.closeAddButton.addEventListener('click', closeAdd);
 elements.cancelAddButton.addEventListener('click', closeAdd);
 elements.addOverlay.addEventListener('click', event => { if (event.target === elements.addOverlay) closeAdd(); });
@@ -49,7 +78,13 @@ elements.quotaForm.addEventListener('submit', updateQuota);
 function enterApp(session) {
   state.csrfToken=session.csrfToken;
   state.role=session.role;
-  elements.roleLabel.textContent=state.role==='superadmin'?'超级管理员':'管理员';
+  state.accessKey=session.accessKey;
+  state.accessKeys=[];
+  state.selectedAccessId=session.accessKey?.id||'';
+  elements.roleLabel.textContent=state.role==='superadmin'?'超级管理员':'密钥管理';
+  elements.accessManagement.classList.toggle('hidden',state.role!=='superadmin');
+  elements.changeSecretButton.classList.toggle('hidden',state.role==='superadmin');
+  elements.accessSearch.value='';
   elements.openAddButton.classList.toggle('hidden',state.role!=='superadmin');
   elements.loginScreen.classList.add('hidden');
   elements.app.classList.remove('hidden');
@@ -57,23 +92,97 @@ function enterApp(session) {
 }
 
 function showLogin() {
-  closeBudget(); closeAdd(); closeQuota();
+  closeBudget(); closeAdd(); closeQuota(); closeAccess(); closeTransfer();
+  state.loadVersion++;
+  state.csrfToken='';state.keys=[];state.budget=null;state.accessKeys=[];state.accessKey=null;state.selectedAccessId='';
+  elements.accessList.innerHTML='';elements.accessTotals.innerHTML='';elements.currentAccess.textContent='';elements.usageSummary.innerHTML='';elements.keyGrid.innerHTML='';
   elements.app.classList.add('hidden');
   elements.loginScreen.classList.remove('hidden');
   elements.password.focus();
 }
 
 async function loadKeys(showMessage=false) {
+  const version=++state.loadVersion;
   setBusy(elements.refreshButton,true,'刷新中…');
   if(!state.keys.length)elements.keyGrid.innerHTML='<div class="loading">正在读取用量数据…</div>';
   try {
+    if(state.role==='superadmin') {
+      const list=await api('/api/access-keys');
+      if(version!==state.loadVersion)return;
+      state.accessKeys=list.accessKeys;
+      if(!state.accessKeys.some(entry=>entry.id===state.selectedAccessId))state.selectedAccessId=state.accessKeys[0]?.id||'';
+      renderAccessKeys();
+    }
     const data=await api(showMessage?'/api/refresh':'/api/keys',showMessage?{method:'POST'}:{});
+    if(version!==state.loadVersion)return;
     state.keys=data.keys; state.schedule=data.schedule;state.budget=data.budget;
+    const selected=currentAccess();
+    if(selected){selected.budget=data.budget;selected.keyCount=data.keys.length;}
+    renderAccessKeys();renderCurrentAccess();
     renderSummary(); renderKeys(); renderSchedule();
     if(showMessage) toast(data.cached?'已显示缓存，手动刷新最多每 5 分钟一次':data.budget?.stale?'同步未完成，保留最近成功数据':'数据已刷新');
   } catch(error) {
-    elements.syncStatus.textContent=error.message;
-  } finally { setBusy(elements.refreshButton,false,'刷新数据'); }
+    if(version===state.loadVersion)elements.syncStatus.textContent=error.message;
+  } finally { if(version===state.loadVersion)setBusy(elements.refreshButton,false,'刷新数据'); }
+}
+
+function currentAccess(){return state.role==='superadmin'?state.accessKeys.find(entry=>entry.id===state.selectedAccessId):state.accessKey;}
+
+function renderCurrentAccess(){
+  const entry=currentAccess();
+  elements.currentAccess.innerHTML=entry?`<span>${state.role==='superadmin'?'当前管理':'当前登录'}密钥</span><strong>${escapeHtml(entry.secret)}</strong>${entry.previousSecrets.length?`<small>曾用密钥：${entry.previousSecrets.map(escapeHtml).join('、')}</small>`:''}`:'';
+}
+
+function renderAccessKeys(){
+  if(state.role!=='superadmin')return;
+  const all=state.accessKeys, ready=all.every(entry=>entry.budget.used!==null), allocated=all.reduce((sum,entry)=>sum+(entry.budget.limit||0),0), used=all.reduce((sum,entry)=>sum+(entry.budget.used||0),0), balance=all.reduce((sum,entry)=>sum+(entry.budget.balance||0),0);
+  const unset=all.filter(entry=>entry.budget.limit===null).length;
+  elements.accessTotals.innerHTML=`<div><span>登录密钥</span><strong>${all.length}</strong></div><div><span>月度总额度${unset?'（已设置）':''}</span><strong>${money(allocated)}</strong></div><div><span>本月已用</span><strong>${ready?money(used):'待同步'}</strong></div><div><span>剩余额度${unset?'（已设置）':''}</span><strong>${ready?money(balance):'待同步'}</strong></div>`;
+  const search=elements.accessSearch.value.toLocaleLowerCase();
+  const matches=all.filter(entry=>[entry.secret,...entry.previousSecrets].some(value=>value.toLocaleLowerCase().includes(search)));
+  elements.accessList.innerHTML=matches.map(entry=>`<article class="access-card${entry.id===state.selectedAccessId?' access-selected':''}"><div class="access-card-heading"><strong>${escapeHtml(entry.secret)}</strong><span>${entry.keyCount} 个 API Key</span></div>${entry.previousSecrets.length?`<p class="access-history">曾用密钥：${entry.previousSecrets.map(escapeHtml).join('、')}</p>`:''}<dl><div><dt>每月额度</dt><dd>${entry.budget.limit===null?'未设置':money(entry.budget.limit)}</dd></div><div><dt>已用 / 剩余</dt><dd>${entry.budget.used===null?'待同步':`${money(entry.budget.used)} / ${entry.budget.balance===null?'未设置':money(entry.budget.balance)}`}</dd></div></dl><p class="access-status">${entry.budget.stale?'用量待同步 · ':''}${entry.budget.status==='blocked'?'月度额度已用尽':entry.budget.limit===null?'尚未设置月度额度':'月度额度已启用'}</p><div class="access-actions"><button class="secondary" data-access-select="${entry.id}" aria-pressed="${entry.id===state.selectedAccessId}">${entry.id===state.selectedAccessId?'正在管理':'查看管理'}</button><button class="secondary" data-access-budget="${entry.id}">设置额度</button><button class="text-button" data-access-edit="${entry.id}">修改密钥</button></div></article>`).join('')||'<p class="access-empty">没有匹配的登录密钥或曾用密钥。</p>';
+  elements.accessList.querySelectorAll('[data-access-select]').forEach(button=>button.addEventListener('click',()=>selectAccess(button.dataset.accessSelect)));
+  elements.accessList.querySelectorAll('[data-access-edit]').forEach(button=>button.addEventListener('click',()=>openAccess(all.find(entry=>entry.id===button.dataset.accessEdit))));
+  elements.accessList.querySelectorAll('[data-access-budget]').forEach(button=>button.addEventListener('click',async()=>{
+    await selectAccess(button.dataset.accessBudget);
+    if(state.selectedAccessId===button.dataset.accessBudget&&!elements.app.classList.contains('hidden'))document.getElementById('editBudget')?.click();
+  }));
+}
+
+async function selectAccess(id){
+  state.selectedAccessId=id;state.keys=[];state.budget=null;
+  elements.usageSummary.innerHTML='';elements.budgetStatus.textContent='';elements.syncStatus.textContent='';
+  renderCurrentAccess();renderAccessKeys();
+  await loadKeys();
+}
+
+function openAccess(entry){
+  editingAccessId=entry?.id||null;
+  elements.accessTitle.textContent=entry?'修改登录密钥':'新增登录密钥';
+  elements.accessDescription.textContent=entry?'修改后旧密钥失效，需要重新登录；关联的 API Key、额度和用量不变。':'设置用于登录管理页的密钥和月度额度，保存后关联 API Key。';
+  elements.accessSecret.value=entry?.secret||'';
+  elements.accessLimitField.classList.toggle('hidden',!!entry);
+  elements.accessLimit.required=!entry;
+  elements.accessLimit.value='';elements.accessError.textContent='';
+  elements.accessOverlay.classList.remove('hidden');elements.accessSecret.focus();
+}
+
+function closeAccess(){elements.accessOverlay.classList.add('hidden');elements.accessForm.reset();elements.accessError.textContent='';editingAccessId=null;}
+
+async function saveAccess(event){
+  event.preventDefault();elements.accessError.textContent='';setBusy(elements.saveAccessButton,true,'保存中…');
+  const self=state.role!=='superadmin', editing=editingAccessId;
+  const changed=self&&elements.accessSecret.value!==state.accessKey?.secret;
+  try {
+    const url=self?'/api/login-secret':editing?`/api/access-keys/${encodeURIComponent(editing)}`:'/api/access-keys';
+    const body={secret:elements.accessSecret.value,...(!editing?{limit:Number(elements.accessLimit.value)}:{})};
+    const result=await api(url,{method:editing?'PUT':'POST',body});
+    closeAccess();
+    if(changed){showLogin();toast('登录密钥已修改，请使用新密钥登录');return;}
+    if(!editing)state.selectedAccessId=result.accessKey.id;
+    await loadKeys();toast(editing?'登录密钥已保存':'登录密钥已创建，请关联 API Key');
+  }catch(error){elements.accessError.textContent=error.message;}
+  finally{setBusy(elements.saveAccessButton,false,'保存');}
 }
 
 function renderKeys() {
@@ -86,6 +195,10 @@ function renderKeys() {
   }).join('');
   document.querySelectorAll('[data-remove]').forEach(button=>button.addEventListener('click',()=>removeKey(button.dataset.remove)));
   document.querySelectorAll('[data-remove]').forEach(button=>button.classList.toggle('hidden',state.role!=='superadmin'));
+  if(state.role==='superadmin'&&state.accessKeys.length>1)elements.keyGrid.querySelectorAll('[data-remove]').forEach(button=>{
+    const transfer=document.createElement('button');transfer.className='text-button';transfer.textContent='转移关联';
+    transfer.addEventListener('click',()=>openTransfer(button.dataset.remove));button.before(transfer);
+  });
   document.querySelectorAll('[data-quota]').forEach(button=>button.addEventListener('click',()=>openQuota(button.dataset.quota,button.dataset.name,button.dataset.value)));
 }
 
@@ -142,9 +255,12 @@ function escapeHtml(value){return String(value??'').replace(/[&<>"']/g,char=>({'
 function toast(message){elements.toast.textContent=message;elements.toast.classList.add('show');setTimeout(()=>elements.toast.classList.remove('show'),3000)}
 
 async function api(url, options={}) {
+  if(state.role==='superadmin'&&state.selectedAccessId&&/^\/api\/(keys(?:\/|$)|budget$|refresh$)/.test(url))url+=`?accessKeyId=${encodeURIComponent(state.selectedAccessId)}`;
   const headers={Accept:'application/json',...(options.body?{'Content-Type':'application/json'}:{}),...(state.csrfToken?{'X-CSRF-Token':state.csrfToken}:{})};
   const response=await fetch(url,{method:options.method||'GET',headers,credentials:'same-origin',body:options.body?JSON.stringify(options.body):undefined});
   const data=await response.json().catch(()=>({error:'服务器返回格式错误'}));
   if(!response.ok){if(response.status===401&&url!=='/api/login')showLogin();throw new Error(data.error||`请求失败 (${response.status})`)}
   return data;
 }
+
+boot();

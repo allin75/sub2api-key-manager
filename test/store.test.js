@@ -20,6 +20,33 @@ test('store persists only a hash and masked key', async () => {
   }
 });
 
+test('login key migration preserves budgets and rename survives restart without restoring the old password', async () => {
+  const directory=await fs.mkdtemp(path.join(os.tmpdir(),'sub2api-access-migrate-'));
+  process.env.DATA_DIR=directory;
+  try {
+    const store=await import(`../src/store.js?access=${Date.now()}`);
+    await store.loadStore();
+    const before=store.getState();
+    before.budget.limit=123;
+    before.budget.month='2026-09';
+    before.budget.ledger.old=10000000;
+    before.budget.paused.old={id:'removed',keyHash:'old',phase:'disabled'};
+    before.lastResetAt='2026-09-14T00:00:00Z';
+    await store.saveState(before);
+    await store.initializeAccessKeys('111');
+    const next=store.getState(),entry=next.accessKeys[0];
+    assert.deepEqual(entry.state,before);
+    assert.deepEqual(JSON.parse(await fs.readFile(path.join(directory,'state.json.v3-backup'),'utf8')),before);
+    entry.secret='mise111';entry.previousSecrets=['111'];
+    await store.saveState(next);
+    const reloaded=await import(`../src/store.js?accessReload=${Date.now()}`);
+    await reloaded.loadStore();await reloaded.initializeAccessKeys('111');
+    assert.equal(reloaded.getState().accessKeys[0].secret,'mise111');
+    assert.deepEqual(reloaded.getState().accessKeys[0].state,before);
+    assert.deepEqual(reloaded.getState().accessKeys[0].previousSecrets,['111']);
+  } finally { await fs.rm(directory,{recursive:true,force:true}); }
+});
+
 test('v2 migration preserves keys/reset records and leaves budget disabled', async () => {
   const directory=await fs.mkdtemp(path.join(os.tmpdir(),'sub2api-migrate-'));
   process.env.DATA_DIR=directory;

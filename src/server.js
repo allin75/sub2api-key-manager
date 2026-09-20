@@ -7,22 +7,39 @@ import * as store from './store.js';
 import * as upstream from './sub2api.js';
 import { UpstreamError } from './sub2api.js';
 import { KeyManager, ManagerError } from './manager.js';
-import { safeEqual } from './utils.js';
+import { safeEqual, hashKey } from './utils.js';
 
 const port = Number(process.env.PORT || 3000);
 const adminPassword = process.env.ADMIN_PASSWORD || '111';
 const cookieSecure = process.env.COOKIE_SECURE === 'true';
 const superPassword = process.env.SUPERADMIN_PASSWORD || 'superadmin';
-if (safeEqual(adminPassword, superPassword)) throw new Error('管理员与超级管理员密码不能相同');
 const publicDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../public');
 const sessions = new Map();
 const loginAttempts = new Map();
 const sessionTtlMs = 12 * 60 * 60 * 1000;
 await store.loadStore();
-const manager = new KeyManager({store,upstream});
+if (!store.getState().accessKeys && safeEqual(adminPassword,superPassword)) throw new Error('首次登录密钥与超级管理员密码不能相同');
+await store.initializeAccessKeys(adminPassword);
+if (store.getState().accessKeys.some(item => safeEqual(item.secret, superPassword))) throw new Error('登录密钥与超级管理员密码不能相同');
+const managers = new Map();
+let operationQueue = Promise.resolve();
+function exclusive(operation) {
+  const result = operationQueue.then(operation);
+  operationQueue = result.catch(() => {});
+  return result;
+}
+function getManager(id) {
+  if (!managers.has(id)) {
+    const manager = new KeyManager({ store: store.scopedStore(id), upstream });
+    // All scopes and credential changes share one queue to avoid lost updates.
+    manager.exclusive = exclusive;
+    managers.set(id, manager);
+  }
+  return managers.get(id);
+}
 
-if (adminPassword === '111') {
-  console.warn('[security] ADMIN_PASSWORD 正在使用默认值 111，请在 Docker 环境变量中尽快修改。');
+if (store.getState().accessKeys.some(entry => entry.secret === '111')) {
+  console.warn('[security] 存在默认登录密钥，请在页面中修改。');
 }
 
 const server = http.createServer(async (request, response) => {
@@ -46,7 +63,15 @@ const server = http.createServer(async (request, response) => {
 server.listen(port, '0.0.0.0', () => {
   console.log(`Sub2API Key Manager listening on port ${server.address().port}`);
 });
-const runTick = () => manager.tick().catch(() => console.error('[scheduler] State operation failed'));
+let ticking = false;
+const runTick = async () => {
+  if (ticking) return;
+  ticking = true;
+  try {
+    for (const entry of store.getState().accessKeys) await getManager(entry.id).tick();
+  } catch { console.error('[scheduler] State operation failed'); }
+  finally { ticking = false; }
+};
 setTimeout(runTick, 1000);
 setInterval(runTick, 30000);
 
@@ -64,7 +89,93 @@ async function handleApi(request, response, url) {
   const session = requireSession(request);
   if (method !== 'GET' && method !== 'HEAD') requireCsrf(request, session);
 
-  if (method === 'GET' && url.pathname === '/api/session') return sendJson(response,200,{authenticated:true,csrfToken:session.csrfToken,role:session.role});
+  if (method === 'GET' && url.pathname === '/api/session') return sendJson(response,200,sessionView(session));
+  if (url.pathname === '/api/access-keys') {
+    requireSuperadmin(session);
+    if (method === 'GET') return sendJson(response,200,accessKeyList());
+    if (method === 'POST') {
+      const body = await readBody(request);
+      const entry = await exclusive(async () => {
+        const next = store.getState();
+        const secret = validateSecret(body.secret, next);
+        const limit = validateLimit(body.limit);
+        const entry = { id: crypto.randomUUID(), secret, previousSecrets: [], ownedHashes: [], state: structuredClone(store.initialState) };
+        entry.state.budget.limit = limit;
+        next.accessKeys.push(entry);
+        await store.saveState(next);
+        return entry;
+      });
+      await getManager(entry.id).refresh();
+      return sendJson(response,201,{ accessKey: accessKeyView(entry) });
+    }
+  }
+  const accessMatch = url.pathname.match(/^\/api\/access-keys\/([^/]+)$/);
+  if (method === 'PUT' && (accessMatch || url.pathname === '/api/login-secret')) {
+    if (accessMatch) requireSuperadmin(session);
+    else if (!session.accessKeyId) throw new HttpError('请在登录密钥管理中选择要修改的密钥',400);
+    const body = await readBody(request);
+    const id = accessMatch ? accessMatch[1] : session.accessKeyId;
+    const entry = await exclusive(async () => {
+      const next = store.getState();
+      const entry = next.accessKeys.find(item => item.id === id);
+      if (!entry) throw new HttpError('登录密钥不存在',404);
+      const secret = validateSecret(body.secret, next, id);
+      if (entry.secret !== secret) {
+        entry.previousSecrets = [...new Set([...entry.previousSecrets, entry.secret])];
+        entry.secret = secret;
+        await store.saveState(next);
+        for (const [token, existing] of sessions) if (existing.accessKeyId === id) sessions.delete(token);
+      }
+      return entry;
+    });
+    return sendJson(response,200,{ accessKey: accessKeyView(entry) });
+  }
+  const entries = store.getState().accessKeys;
+  const scopeId = url.searchParams.get('accessKeyId') || session.accessKeyId || entries[0].id;
+  if (session.role !== 'superadmin' && scopeId !== session.accessKeyId) throw new HttpError('不能访问其他登录密钥的数据',403);
+  if (!entries.some(item => item.id === scopeId)) throw new HttpError('登录密钥不存在',404);
+  const manager = getManager(scopeId);
+  const transferMatch=url.pathname.match(/^\/api\/keys\/([^/]+)\/transfer$/);
+  if (method === 'POST' && transferMatch) {
+    requireSuperadmin(session);
+    const body=await readBody(request);
+    await exclusive(async () => {
+      const destination=store.getState().accessKeys.find(entry=>entry.id===body.accessKeyId);
+      if (!destination) throw new HttpError('目标登录密钥不存在',404);
+      if (destination.id===scopeId) throw new HttpError('请选择另一条登录密钥',400);
+      const targetManager=getManager(destination.id);
+      const sourceState=manager.store.getState(),targetState=targetManager.store.getState();
+      if (!sourceState.configuredKeys.some(key=>key.id===transferMatch[1])) throw new HttpError('API Key 不存在',404);
+      if (!await manager.sync(sourceState) || !await targetManager.sync(targetState)) throw new HttpError('同步失败，未转移关联，请稍后重试',502);
+      if (sourceState.budget.month !== targetState.budget.month) throw new HttpError('同步期间发生跨月，请重试转移关联',409);
+      const next=store.getState(),source=next.accessKeys.find(entry=>entry.id===scopeId),target=next.accessKeys.find(entry=>entry.id===destination.id);
+      const key=source.state.configuredKeys.find(key=>key.id===transferMatch[1]);
+      const hash=key.keyHash;
+      source.state.configuredKeys=source.state.configuredKeys.filter(item=>item.id!==key.id);
+      source.state.cache.keys=source.state.cache.keys.filter(item=>item.id!==key.id);
+      source.ownedHashes=source.ownedHashes.filter(value=>value!==hash);
+      target.state.configuredKeys.push(key);
+      target.ownedHashes=[...new Set([...target.ownedHashes,hash])];
+      target.state.budget.ledger[hash]=source.state.budget.ledger[hash]||0;
+      delete source.state.budget.ledger[hash];
+      if (source.state.budget.paused[hash]) {
+        target.state.budget.paused[hash]=source.state.budget.paused[hash];
+        delete source.state.budget.paused[hash];
+      }
+      // Ownership and its ledger move atomically; retries survive a crash or upstream failure.
+      for (const entry of [source,target]) {
+        entry.state.cache.error='关联已调整，等待额度同步';
+        entry.state.actionRetry=true;entry.state.retryAt=new Date().toISOString();
+        if(entry.state.resetOperation)entry.state.resetOperation.succeededHashes=entry.state.resetOperation.succeededHashes.filter(value=>value!==hash);
+      }
+      await store.saveState(next);
+      await manager.sync(manager.store.getState());
+      await targetManager.sync(targetManager.store.getState());
+    });
+    const accessKeys=accessKeyList().accessKeys;
+    const pendingSync=accessKeys.some(entry=>[scopeId,body.accessKeyId].includes(entry.id)&&(entry.budget.error||entry.budget.pendingCount));
+    return sendJson(response,200,{ ...manager.view(), accessKeys, pendingSync });
+  }
   if (method === 'GET' && url.pathname === '/api/keys') return sendJson(response,200,manager.view());
   if (method === 'POST' && url.pathname === '/api/refresh') return sendJson(response,200,await manager.refresh());
   if ((method === 'POST' && url.pathname === '/api/keys') ||
@@ -78,7 +189,13 @@ async function handleApi(request, response, url) {
   }
   if (method === 'POST' && url.pathname === '/api/keys') {
     const body=await readBody(request);
-    return sendJson(response,200,await manager.add(body.customKey));
+    // Check ownership inside the same queue as the add operation.
+    const result = await exclusive(async () => {
+      const hash = typeof body.customKey === 'string' ? hashKey(body.customKey.trim()) : null;
+      if (store.getState().accessKeys.some(item => item.id !== scopeId && (item.ownedHashes.includes(hash) || item.state.budget.ledger[hash] !== undefined || item.state.budget.paused[hash]))) throw new HttpError('该 API Key 已关联其他登录密钥',409);
+      return manager.addNow(body.customKey);
+    });
+    return sendJson(response,200,result);
   }
   const match=url.pathname.match(/^\/api\/keys\/([^/]+)$/);
   if (match && method === 'DELETE') return sendJson(response,200,await manager.remove(match[1]));
@@ -95,7 +212,9 @@ async function login(request, response) {
   const attempt = loginAttempts.get(address) || { count: 0, blockedUntil: 0 };
   if (Date.now() < attempt.blockedUntil) throw new HttpError('尝试次数过多，请稍后再试', 429);
   const body = await readBody(request);
-  const role = safeEqual(body.password || '',superPassword) ? 'superadmin' : safeEqual(body.password || '',adminPassword) ? 'admin' : null;
+  const password = typeof body.password === 'string' ? body.password : '';
+  const entry = store.getState().accessKeys.find(item => safeEqual(password,item.secret));
+  const role = safeEqual(password,superPassword) ? 'superadmin' : entry ? 'admin' : null;
   if (!role) {
     attempt.count += 1;
     if (attempt.count >= 5) {
@@ -107,10 +226,42 @@ async function login(request, response) {
   }
   loginAttempts.delete(address);
   const token = crypto.randomBytes(32).toString('base64url');
-  const session = { token, role, csrfToken: crypto.randomBytes(24).toString('base64url'), expiresAt: Date.now() + sessionTtlMs };
+  const session = { token, role, accessKeyId: role === 'admin' ? entry.id : null, csrfToken: crypto.randomBytes(24).toString('base64url'), expiresAt: Date.now() + sessionTtlMs };
   sessions.set(token, session);
   response.setHeader('Set-Cookie', `session=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${sessionTtlMs / 1000}${cookieSecure ? '; Secure' : ''}`);
-  sendJson(response, 200, { authenticated: true, csrfToken: session.csrfToken, role });
+  sendJson(response, 200, sessionView(session));
+}
+
+function requireSuperadmin(session) {
+  if (session.role !== 'superadmin') throw new HttpError('仅超级管理员可执行此操作',403);
+}
+
+function accessKeyView(entry) {
+  return { id: entry.id, secret: entry.secret, previousSecrets: entry.previousSecrets };
+}
+
+function sessionView(session) {
+  const entry = store.getState().accessKeys.find(item => item.id === session.accessKeyId);
+  return { authenticated: true, csrfToken: session.csrfToken, role: session.role, accessKey: entry ? accessKeyView(entry) : null };
+}
+
+function accessKeyList() {
+  const accessKeys = store.getState().accessKeys.map(entry => {
+    const view = getManager(entry.id).view();
+    return { ...accessKeyView(entry), budget: view.budget, keyCount: view.keys.length };
+  });
+  return { accessKeys };
+}
+
+function validateSecret(value, state, id) {
+  if (typeof value !== 'string' || value !== value.trim() || !value.length || value.length > 128 || /[\u0000-\u001f\u007f]/.test(value)) throw new HttpError('登录密钥需为 1–128 个字符，首尾不能有空格',400);
+  if (safeEqual(value,superPassword) || state.accessKeys.some(item => item.id !== id && safeEqual(item.secret,value))) throw new HttpError('该登录密钥已存在，请换一个',409);
+  return value;
+}
+
+function validateLimit(value) {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0.01 || value > 1e8) throw new HttpError('月度额度必须为 $0.01–$100,000,000',400);
+  return Math.round(value * 100) / 100;
 }
 
 function requireSession(request) {

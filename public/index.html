@@ -5,16 +5,16 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Sub2API Key 用量管理</title>
   <link rel="stylesheet" href="/styles.css">
-  <link rel="stylesheet" href="/overrides.css?v=20260918-2">
-  <script src="/app.js?v=20260918-3" defer></script>
+  <link rel="stylesheet" href="/overrides.css?v=20260920-1">
+  <script src="/app.js?v=20260920-1" defer></script>
 </head>
 <body>
   <div class="login-screen" id="loginScreen">
     <form class="login-card" id="loginForm">
       <div class="brand-mark">S2</div>
       <h1>Key 用量管理</h1>
-      <p>输入管理密码进入内部管理页</p>
-      <label for="password">管理密码</label>
+      <p>输入登录密钥，查看对应的 Key 和额度</p>
+      <label for="password">登录密钥</label>
       <input id="password" type="password" required autocomplete="current-password" placeholder="请输入密码">
       <button class="primary wide" type="submit">登录</button>
       <div class="form-error" id="loginError"></div>
@@ -24,11 +24,20 @@
   <main class="shell hidden" id="app">
     <header class="topbar">
       <div class="brand"><div class="brand-mark small">S2</div><div><strong>Sub2API</strong><span>自定义 Key 用量管理</span></div></div>
-      <div><span id="roleLabel" class="role-label"></span><button class="text-button" id="logoutButton">退出登录</button></div>
+      <div><span id="roleLabel" class="role-label"></span><button class="text-button hidden" id="changeSecretButton">修改登录密钥</button><button class="text-button" id="logoutButton">退出登录</button></div>
     </header>
 
+    <section class="access-management hidden" id="accessManagement" aria-label="登录密钥管理">
+      <div class="access-heading"><div><p class="eyebrow">ACCESS KEYS</p><h1>登录密钥管理</h1><p>每条登录密钥独立管理 API Key 和月度额度。</p></div><button class="primary" id="newAccessButton">＋ 新增登录密钥</button></div>
+      <div class="access-totals" id="accessTotals"></div>
+      <label class="access-search-label" for="accessSearch">查找登录密钥</label>
+      <input class="access-search" id="accessSearch" type="search" placeholder="搜索当前或曾用密钥" autocomplete="off">
+      <div class="access-list" id="accessList"></div>
+    </section>
+    <section class="access-current" id="currentAccess" aria-live="polite"></section>
+
     <section class="hero">
-      <div><p class="eyebrow">KEY MANAGEMENT</p><h1>用量总览</h1><p>只展示并管理你添加到此页面的自定义 Key。</p></div>
+      <div><p class="eyebrow">KEY MANAGEMENT</p><h1>用量总览</h1><p>当前登录密钥关联的 API Key 与用量。</p></div>
       <div class="hero-actions"><div class="schedule-pill"><span>距每周重置</span><strong id="resetCountdown">--d--h--m</strong></div><button class="secondary" id="refreshButton">刷新数据</button><button class="primary hidden" id="openAddButton">＋ 添加自定义 Key</button></div>
     </section>
 
@@ -41,7 +50,7 @@
 
   <div class="overlay hidden" id="addOverlay">
     <form class="modal" id="addForm">
-      <div class="modal-head"><div><h2>添加自定义 Key</h2><p>完整 Key 只用于本次匹配，服务端仅保存不可逆哈希。</p></div><button type="button" class="icon-button" id="closeAddButton" aria-label="关闭">×</button></div>
+      <div class="modal-head"><div><h2>关联 API Key</h2><p id="addDescription">关联到当前选中的登录密钥；完整 API Key 仅用于验证。</p></div><button type="button" class="icon-button" id="closeAddButton" aria-label="关闭">×</button></div>
       <label for="customKey">自定义 Key</label>
       <input id="customKey" required autocomplete="off" placeholder="sk-...">
       <div class="form-error" id="addError"></div>
@@ -60,12 +69,32 @@
 
   <div class="overlay hidden" id="budgetOverlay">
     <form class="modal" id="budgetForm">
-      <div class="modal-head"><div><h2>月度总额度</h2><p>所有已配置 Key 共用；每月 1 日 00:00 刷新余额（北京时间），不结转。设置后立即计入本月已有消费。</p></div><button type="button" class="icon-button" id="closeBudgetButton" aria-label="关闭月度额度">×</button></div>
+      <div class="modal-head"><div><h2>月度总额度</h2><p>当前登录密钥关联的 API Key 共用；每月 1 日 00:00 刷新余额（北京时间），不结转。设置后立即计入本月已有消费。</p></div><button type="button" class="icon-button" id="closeBudgetButton" aria-label="关闭月度额度">×</button></div>
       <label for="budgetInput">每月总额度（USD）</label>
       <input id="budgetInput" type="number" min="0.01" max="100000000" step="0.01" required>
       <p>降低到已用金额及以下会停用已配置 Key；提高至高于已用金额会恢复本应用因月额度停用的 Key。</p>
       <div class="form-error" id="budgetError"></div>
       <div class="modal-actions"><button type="button" class="secondary" id="cancelBudgetButton">取消</button><button type="submit" class="primary" id="saveBudgetButton">保存总额度</button></div>
+    </form>
+  </div>
+  <div class="overlay hidden" id="accessOverlay">
+    <form class="modal" id="accessForm">
+      <div class="modal-head"><div><h2 id="accessTitle">新增登录密钥</h2><p id="accessDescription"></p></div><button type="button" class="icon-button" id="closeAccessButton" aria-label="关闭登录密钥设置">×</button></div>
+      <label for="accessSecret">登录密钥</label>
+      <input id="accessSecret" type="text" required maxlength="128" autocomplete="off" spellcheck="false">
+      <div id="accessLimitField"><label for="accessLimit">每月总额度（USD）</label><input id="accessLimit" type="number" min="0.01" max="100000000" step="0.01"></div>
+      <div class="form-error" id="accessError" role="alert"></div>
+      <div class="modal-actions"><button type="button" class="secondary" id="cancelAccessButton">取消</button><button type="submit" class="primary" id="saveAccessButton">保存</button></div>
+    </form>
+  </div>
+  <div class="overlay hidden" id="transferOverlay">
+    <form class="modal" id="transferForm">
+      <div class="modal-head"><div><h2>转移 API Key 关联</h2><p id="transferDescription"></p></div><button type="button" class="icon-button" id="closeTransferButton" aria-label="关闭关联设置">×</button></div>
+      <label for="transferTarget">目标登录密钥</label>
+      <select id="transferTarget" required></select>
+      <p>本月用量随 API Key 一起转移，并按目标登录密钥的月度额度重新计算余额和使用状态。</p>
+      <div class="form-error" id="transferError" role="alert"></div>
+      <div class="modal-actions"><button type="button" class="secondary" id="cancelTransferButton">取消</button><button type="submit" class="primary" id="saveTransferButton">转移关联</button></div>
     </form>
   </div>
   <div class="toast" id="toast" role="status"></div>
