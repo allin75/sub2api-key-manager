@@ -80,6 +80,9 @@ test('HTTP roles, CSRF, cache, and budget enforcement through mock Sub2API',asyn
     assert.equal((await request('/api/budget','PUT',{limit:100},superadmin,false)).status,403);
     const added=await (await request('/api/keys','POST',{customKey:key.key},superadmin)).json();
     const id=added.keys[0].id;
+    assert.equal(added.keys[0].usage.daily.length,7);
+    assert.equal(added.keys[0].usage.daily.at(-1).cost,50);
+    assert.ok(added.keys[0].usage.daily.slice(0,-1).every(day=>day.cost===0));
     assert.equal(added.budget.status,'unset');
     assert.equal((await request('/api/keys/'+id,'PUT',{quota:80})).status,200);
     assert.equal(key.quota,80);

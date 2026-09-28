@@ -1,4 +1,4 @@
-import { aggregateDailyUsage, dateRanges, hashKey } from './utils.js';
+import { aggregateDailyUsage, dateRanges, hashKey, recentDailyUsage } from './utils.js';
 
 const baseUrl = (process.env.SUB2API_BASE_URL || 'https://sub2api.yfyf.fun').replace(/\/$/, '');
 const email = process.env.SUB2API_EMAIL || '';
@@ -95,7 +95,7 @@ export async function getUsageForKey(keyId, now = new Date()) {
   if (!Array.isArray(items) || items.some(item => !/^\d{4}-\d{2}-\d{2}$/.test(item.date) || item.actual_cost == null || !Number.isFinite(Number(item.actual_cost)) || Number(item.actual_cost)<0)) {
     throw new UpstreamError('Sub2API 实际消费统计格式无效');
   }
-  return aggregateDailyUsage(items, dateRanges(now, 'Asia/Shanghai'));
+  return { ...aggregateDailyUsage(items, dateRanges(now, 'Asia/Shanghai')), daily: recentDailyUsage(items, now) };
 }
 
 export async function resetKey(keyId) {

@@ -105,6 +105,17 @@ export function aggregateDailyUsage(items, ranges) {
   return result;
 }
 
+export function recentDailyUsage(items, now = new Date()) {
+  const today = dateRanges(now).today[0];
+  const midnight = Date.parse(`${today}T00:00:00Z`);
+  return Array.from({ length: 7 }, (_, index) => {
+    const date = new Date(midnight - (6 - index) * 86400000).toISOString().slice(0, 10);
+    const cost = items.filter(item => item.date === date)
+      .reduce((sum, item) => sum + Number(item.actual_cost ?? item.cost ?? 0), 0);
+    return { date, cost };
+  });
+}
+
 export function safeEqual(left, right) {
   const leftHash = crypto.createHash('sha256').update(String(left)).digest();
   const rightHash = crypto.createHash('sha256').update(String(right)).digest();

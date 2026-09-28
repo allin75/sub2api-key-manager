@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { aggregateDailyUsage, cooldownState, dateRanges, hashKey, isWeeklyResetDue, weeklyResetState } from '../src/utils.js';
+import { recentDailyUsage, aggregateDailyUsage, cooldownState, dateRanges, hashKey, isWeeklyResetDue, weeklyResetState } from '../src/utils.js';
 
 test('hashKey produces stable non-plaintext identifier', () => {
   const key = 'sk-example-1234567890';
@@ -50,4 +50,27 @@ test('weekly reset runs once on Monday after 06:00', () => {
   assert.equal(isWeeklyResetDue(null, monday, 'Asia/Shanghai'), true);
   assert.equal(isWeeklyResetDue('2026-08-30T22:01:00Z', monday, 'Asia/Shanghai'), false);
   assert.equal(isWeeklyResetDue(null, new Date('2026-08-30T21:59:00Z'), 'Asia/Shanghai'), false);
+});
+
+
+test('recent daily usage spans year boundaries and fills missing dates using Beijing time', () => {
+  const daily = recentDailyUsage([
+    { date: '2025-12-26', actual_cost: 99 },
+    { date: '2025-12-27', actual_cost: '1.25' },
+    { date: '2026-01-01', actual_cost: 2 },
+    { date: '2026-01-01', actual_cost: 0.5 },
+    { date: '2026-01-02', actual_cost: 99 }
+  ], new Date('2025-12-31T16:00:00Z'));
+  assert.equal(daily.length, 7);
+  assert.deepEqual(daily[0], { date: '2025-12-26', cost: 99 });
+  assert.deepEqual(daily[1], { date: '2025-12-27', cost: 1.25 });
+  assert.deepEqual(daily[2], { date: '2025-12-28', cost: 0 });
+  assert.deepEqual(daily[6], { date: '2026-01-01', cost: 2.5 });
+});
+
+test('recent daily usage handles leap days and a successful empty response', () => {
+  const daily = recentDailyUsage([], new Date('2024-03-01T04:00:00Z'));
+  assert.equal(daily.length, 7);
+  assert.equal(daily[5].date, '2024-02-29');
+  assert.ok(daily.every(day => day.cost === 0));
 });

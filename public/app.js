@@ -109,6 +109,7 @@ function enterApp(session) {
 }
 
 function showLogin() {
+  closeUsagePreview();
   closeBudget(); closeAdd(); closeQuota(); closeAccess(); closeTransfer(); closeReward();
   state.loadVersion++;
   state.csrfToken='';state.keys=[];state.budget=null;state.accessKeys=[];state.accessKey=null;state.selectedAccessId='';state.rewards=[];state.sorting=false;elements.rewardList.innerHTML='';
@@ -183,6 +184,7 @@ function renderAccessKeys(){
 
 async function selectAccess(id){
   if(state.sorting||state.policySaving)return;
+  closeUsagePreview();
   state.selectedAccessId=id;state.keys=[];state.budget=null;state.rewards=[];renderRewards();
   elements.usageSummary.innerHTML='';elements.budgetStatus.textContent='';elements.syncStatus.textContent='';
   renderCurrentAccess();renderAccessKeys();
@@ -231,7 +233,7 @@ async function saveAccess(event){
 }
 
 function renderKeys() {
-  if(!state.keys.length){elements.keyGrid.innerHTML='<div class="empty"><strong>尚未配置自定义 Key</strong><br>请由超级管理员添加 Key。</div>';return;}
+  if(!state.keys.length){closeUsagePreview();elements.keyGrid.innerHTML='<div class="empty"><strong>尚未配置自定义 Key</strong><br>请由超级管理员添加 Key。</div>';return;}
   const labels=[['yesterday','昨日'],['today','今日'],['week','本周'],['month','本月'],['lastMonth','上月']];
   elements.keyGrid.innerHTML=state.keys.map((key,index)=>{
     if(!key.matched) return `<article class="key-card"><div class="card-head"><div class="key-title"><div class="key-number">${pad(index+1)}</div><div><div class="key-name">未匹配 Key</div><div class="key-value">${escapeHtml(key.maskedKey)}</div></div></div><span class="status missing">未找到</span></div><div class="card-error">${escapeHtml(key.error||'无法匹配')}</div><div class="card-footer"><span>不会参与重置</span><button class="remove" data-remove="${key.id}">移除</button></div></article>`;
@@ -248,6 +250,7 @@ function renderKeys() {
   if(state.budget?.type==='trial')elements.keyGrid.querySelectorAll('.quota-caption').forEach(el=>el.textContent='USD · 体验额度不参与每周重置；此处为上游 Key 的真实已用量');
   else if(!state.budget?.weeklyResetEnabled)elements.keyGrid.querySelectorAll('.quota-caption').forEach(el=>el.textContent='USD · 周刷新已关闭，累计用量不自动重置');
   mountSort(elements.keyGrid,state.keys.map(k=>k.id),'keys');
+  mountUsagePreview();
 }
 
 function renderQuota(key){
@@ -338,9 +341,16 @@ function mountSort(container,ids,kind,disabled=false){
       if(index+delta>=0&&index+delta<ids.length)move(delta);
     });
     handle.addEventListener('pointerdown',event=>{
-      if(event.button!==0||state.sorting||state.policySaving)return;event.preventDefault();state.sorting=true;state.loadVersion++;
-      card.classList.add('sort-dragging');handle.setPointerCapture(event.pointerId);
+      if(event.button!==0||state.sorting||state.policySaving)return;
+      let dragging=false;
+      const startX=event.clientX,startY=event.clientY;
+      handle.setPointerCapture(event.pointerId);
       const onMove=e=>{
+        if(!dragging){
+          if(Math.hypot(e.clientX-startX,e.clientY-startY)<6)return;
+          dragging=true;state.sorting=true;state.loadVersion++;closeUsagePreview();
+          card.classList.add('sort-dragging');
+        }
         const target=document.elementFromPoint(e.clientX,e.clientY)?.closest('[data-sort-id]');
         if(target&&target!==card&&target.parentElement===container){const children=[...container.children];container.insertBefore(card,children.indexOf(card)<children.indexOf(target)?target.nextSibling:target);handle.setPointerCapture(event.pointerId);}
         const box=container.getBoundingClientRect();if(e.clientY<box.top+35)container.scrollTop-=18;else if(e.clientY>box.bottom-35)container.scrollTop+=18;
@@ -349,6 +359,8 @@ function mountSort(container,ids,kind,disabled=false){
       const finish=e=>{
         handle.removeEventListener('pointermove',onMove);handle.removeEventListener('pointerup',finish);handle.removeEventListener('pointercancel',finish);
         if(handle.hasPointerCapture(event.pointerId))handle.releasePointerCapture(event.pointerId);
+        if(!dragging)return;
+        usagePreview.suppressClickUntil=Date.now()+350;
         card.classList.remove('sort-dragging');state.sorting=false;
         if(e.type==='pointercancel'){loadKeys();return;}
         const next=[...container.children].filter(el=>el.dataset.sortId).map(el=>el.dataset.sortId);
@@ -365,5 +377,186 @@ async function saveOrder(kind,ids){
   catch(error){toast(error.message);}
   finally{state.sorting=false;await loadKeys();}
 }
+
+// One shared preview keeps pinning, timers and chart focus stable between cards.
+const usagePreview = { id: null, pinned: false, openTimer: null, closeTimer: null, suppressClickUntil: 0 };
+const usagePopover = document.createElement('section');
+usagePopover.id = 'usagePopover';
+usagePopover.className = 'usage-popover';
+usagePopover.setAttribute('role', 'region');
+usagePopover.setAttribute('aria-label', '最近七天用量');
+usagePopover.hidden = true;
+document.body.append(usagePopover);
+
+function usageCard() {
+  return [...elements.keyGrid.querySelectorAll('[data-sort-id]')].find(card => card.dataset.sortId === usagePreview.id);
+}
+
+function closeUsagePreview() {
+  clearTimeout(usagePreview.openTimer);
+  clearTimeout(usagePreview.closeTimer);
+  const card = usageCard();
+  card?.classList.remove('usage-preview-active', 'usage-preview-pinned');
+  card?.setAttribute('aria-expanded', 'false');
+  usagePreview.id = null;
+  usagePreview.pinned = false;
+  usagePopover.classList.remove('usage-popover-visible');
+  usagePopover.inert = true;
+  usagePreview.closeTimer = setTimeout(() => { usagePopover.hidden = true; }, 180);
+}
+
+function scheduleUsageClose() {
+  clearTimeout(usagePreview.openTimer);
+  clearTimeout(usagePreview.closeTimer);
+  if (!usagePreview.pinned) usagePreview.closeTimer = setTimeout(closeUsagePreview, 200);
+}
+
+function positionUsagePreview() {
+  const card = usageCard();
+  if (!card || !usagePreview.id) return;
+  const box = card.getBoundingClientRect();
+  if (box.bottom < 0 || box.top > innerHeight) { closeUsagePreview(); return; }
+  const width = Math.min(340, innerWidth - 24);
+  usagePopover.style.width = `${width}px`;
+  usagePopover.style.height = `${box.height}px`;
+  usagePopover.style.maxHeight = `${innerHeight - 24}px`;
+  const height = usagePopover.offsetHeight;
+  const grid = elements.keyGrid.getBoundingClientRect();
+  const leftColumn = box.left + box.width / 2 < grid.left + grid.width / 2;
+  const twoColumns = getComputedStyle(elements.keyGrid).gridTemplateColumns.split(' ').length > 1;
+  let left = leftColumn ? box.left - width - 12 : box.right + 12;
+  let top = box.top;
+  let side = leftColumn ? 'left' : 'right';
+  if (!twoColumns || left < 12 || left + width > innerWidth - 12) {
+    side = 'bottom';
+    left = box.left + (box.width - width) / 2;
+    top = box.bottom + 12;
+    if (top + height > innerHeight - 12) {
+      top = box.top - height - 12;
+      side = 'top';
+    }
+  }
+  const beside = side === 'left' || side === 'right';
+  if (beside) usagePopover.style.maxHeight = 'none';
+  usagePopover.dataset.side = side;
+  usagePopover.style.left = `${Math.max(12, Math.min(left, innerWidth - width - 12))}px`;
+  usagePopover.style.top = `${beside ? box.top : Math.max(12, Math.min(top, innerHeight - height - 12))}px`;
+}
+
+function usageDayDetail(day) {
+  const today = new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10);
+  return `${day.date.slice(5).replace('-', '/')} · $${day.cost.toFixed(4)}${day.date === today ? ' · 统计中' : ''}`;
+}
+
+function renderUsageChart(key) {
+  const daily = key.usage?.daily;
+  const valid = Array.isArray(daily) && daily.length === 7 && daily.every(day => /^\d{4}-\d{2}-\d{2}$/.test(day.date) && Number.isFinite(day.cost) && day.cost >= 0);
+  const heading = `<header class="usage-popover-head"><div><span class="usage-eyebrow">最近 7 天 · USD</span><h3>${escapeHtml(key.name)}</h3></div><button type="button" class="usage-preview-close" aria-label="关闭用量预览">×</button></header>`;
+  if (!valid) return `${heading}<p class="usage-chart-empty">每日用量暂未同步<br><small>下次数据刷新后即可查看</small></p>`;
+  const max = Math.max(...daily.map(day => day.cost), 0.01);
+  const points = daily.map((day, i) => ({ x: 22 + i * 46, y: 104 - day.cost / max * 76 }));
+  const line = points.map((point, i) => `${i ? 'L' : 'M'}${point.x},${point.y}`).join(' ');
+  const total = daily.reduce((sum, day) => sum + day.cost, 0);
+  const detail = usageDayDetail;
+  return `${heading}<div class="usage-chart-total"><strong>${money(total)}</strong><span>七天合计</span></div>
+    <svg class="usage-chart" viewBox="0 0 320 140" role="img" aria-label="最近七天每日实际消费折线图">
+      <defs><linearGradient id="usageChartFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#739dff" stop-opacity=".26"/><stop offset="100%" stop-color="#739dff" stop-opacity="0"/></linearGradient></defs>
+      ${[28,66,104].map(y => `<path class="usage-chart-grid" d="M16,${y} H304"/>`).join('')}
+      <path class="usage-chart-area" d="${line} L298,104 L22,104 Z"/>
+      <path class="usage-chart-line" pathLength="1" d="${line}"/>
+      ${points.map((point, i) => `<g class="usage-chart-point" tabindex="0" data-day="${i}" aria-label="${escapeHtml(detail(daily[i]))}"><circle class="usage-chart-hit" cx="${point.x}" cy="${point.y}" r="14"/><circle class="usage-chart-dot" cx="${point.x}" cy="${point.y}" r="3.5"/><text x="${point.x}" y="130" text-anchor="middle">${daily[i].date.slice(5).replace('-', '/')}</text></g>`).join('')}
+    </svg><p class="usage-chart-detail" aria-live="polite">${detail(daily[6])}</p>
+    <footer class="usage-chart-footer"><span>${state.budget?.stale || key.error ? '缓存数据 · 待同步' : '北京时间 · 实际消费'}</span><span class="usage-pin-label"></span></footer>`;
+}
+
+function openUsagePreview(card, pinned = false, refresh = false) {
+  if (state.sorting || Date.now() < usagePreview.suppressClickUntil) return;
+  const key = state.keys.find(item => item.id === card.dataset.sortId);
+  if (!key?.matched) return;
+  clearTimeout(usagePreview.openTimer);
+  clearTimeout(usagePreview.closeTimer);
+  const changed = usagePreview.id !== key.id;
+  if (changed) {
+    usageCard()?.classList.remove('usage-preview-active', 'usage-preview-pinned');
+    usageCard()?.setAttribute('aria-expanded', 'false');
+  }
+  usagePreview.id = key.id;
+  usagePreview.pinned = pinned;
+  if (changed || refresh) {
+    usagePopover.innerHTML = renderUsageChart(key);
+    usagePopover.querySelector('.usage-preview-close').addEventListener('click', () => { closeUsagePreview(); card.focus({ preventScroll: true }); });
+    usagePopover.querySelectorAll('[data-day]').forEach(point => {
+      const showDay = () => {
+        const day = key.usage.daily[Number(point.dataset.day)];
+        usagePopover.querySelector('.usage-chart-detail').textContent = usageDayDetail(day);
+      };
+      point.addEventListener('pointerenter', showDay);
+      point.addEventListener('focus', showDay);
+    });
+  }
+  const label = usagePopover.querySelector('.usage-pin-label');
+  if (label) label.textContent = pinned ? '已固定 · Esc 关闭' : '点击卡片固定';
+  card.classList.add('usage-preview-active');
+  card.classList.toggle('usage-preview-pinned', pinned);
+  card.setAttribute('aria-expanded', 'true');
+  usagePopover.hidden = false;
+  usagePopover.inert = false;
+  if (changed) usagePopover.classList.remove('usage-popover-visible');
+  positionUsagePreview();
+  if (!usagePreview.id) return;
+  // Commit the initial direction before starting the transition.
+  void usagePopover.offsetWidth;
+  usagePopover.classList.add('usage-popover-visible');
+}
+
+function mountUsagePreview() {
+  elements.keyGrid.querySelectorAll('[data-sort-id]').forEach(card => {
+    const key = state.keys.find(item => item.id === card.dataset.sortId);
+    if (!key?.matched) return;
+    card.tabIndex = 0;
+    card.setAttribute('aria-label', `${key.name}，点击或按回车固定最近七天用量`);
+    card.setAttribute('aria-controls', 'usagePopover');
+    card.setAttribute('aria-expanded', 'false');
+    card.addEventListener('pointerenter', event => {
+      if (event.pointerType !== 'mouse' || usagePreview.pinned) return;
+      clearTimeout(usagePreview.closeTimer);
+      clearTimeout(usagePreview.openTimer);
+      usagePreview.openTimer = setTimeout(() => openUsagePreview(card), 180);
+    });
+    card.addEventListener('pointerleave', scheduleUsageClose);
+    const toggle = () => {
+      if (Date.now() < usagePreview.suppressClickUntil || state.sorting) return;
+      if (usagePreview.id === key.id && usagePreview.pinned) closeUsagePreview();
+      else openUsagePreview(card, true);
+    };
+    card.addEventListener('click', event => {
+      if (!event.target.closest('button, input, select, a, label') && !window.getSelection()?.toString()) toggle();
+    });
+    card.addEventListener('keydown', event => {
+      if (event.target !== card || !['Enter', ' '].includes(event.key)) return;
+      event.preventDefault();toggle();
+    });
+  });
+  const card = usageCard();
+  if (card && usagePreview.pinned) openUsagePreview(card, true, true);
+  else closeUsagePreview();
+}
+usagePopover.addEventListener('pointerenter', () => clearTimeout(usagePreview.closeTimer));
+usagePopover.addEventListener('pointerleave', scheduleUsageClose);
+usagePopover.addEventListener('focusin', () => clearTimeout(usagePreview.closeTimer));
+usagePopover.addEventListener('focusout', event => { if (!usagePopover.contains(event.relatedTarget)) scheduleUsageClose(); });
+document.addEventListener('pointerdown', event => {
+  if (!usagePopover.contains(event.target) && !usageCard()?.contains(event.target)) closeUsagePreview();
+});
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && usagePreview.id) {
+    const card = usageCard();
+    const restore = usagePopover.contains(document.activeElement);
+    closeUsagePreview();
+    if (restore) card?.focus({ preventScroll: true });
+  }
+});
+window.addEventListener('resize', positionUsagePreview);
+window.addEventListener('scroll', positionUsagePreview, { capture: true, passive: true });
 
 boot();
