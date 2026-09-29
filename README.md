@@ -23,6 +23,8 @@
 
 ## 在其他电脑继续开发
 
+先阅读 [项目交接记录](docs/PROJECT_HANDOFF.md)。它记录当前源码与 NAS 部署状态、已完成工作和接手步骤；每次完成工作后随代码一同更新并推送。
+
 ```sh
 git clone https://github.com/allin75/sub2api-key-manager.git
 cd sub2api-key-manager

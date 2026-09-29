@@ -6,6 +6,10 @@
 
 `public/` is the browser UI: `index.html`, `app.js`, base styles in `styles.css`, and targeted overrides in `overrides.css`. `test/` mirrors runtime behavior with Node's built-in test runner. Docker deployment files live at the repository root.
 
+## Cross-Machine Handoff
+
+Read `docs/PROJECT_HANDOFF.md` at the start of each task, then check the actual Git and NAS state before relying on its snapshot. After completing work, update its current state, completed actions, and next step; commit and push the record with the related changes. Keep reasons optional and facts verifiable. GitHub `main` is the source sync point; a push does not deploy the NAS. Do not apply the unrelated Android `release` skill to this repository.
+
 ## Build, Test, and Development Commands
 
 Use Node.js 22 or newer; production Docker uses Node.js 24.
