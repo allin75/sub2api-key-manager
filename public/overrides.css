@@ -65,7 +65,14 @@
 }
 .balance-heading { display:flex; align-items:center; justify-content:space-between; margin-bottom:7px; gap:5px; }
 .balance-heading span { margin-bottom:0; }
-.balance-item small { display:block; color:var(--muted); font-size:10px; margin-top:7px; }
+.balance-value { display:flex; align-items:baseline; flex-wrap:wrap; gap:6px; font-variant-numeric:tabular-nums; }
+.summary-item .balance-value strong { font-size:20px; }
+.summary-item .balance-value span { display:inline; margin:0; color:var(--muted); font:400 12px ui-monospace,monospace; white-space:nowrap; }
+@media(max-width:680px) { .balance-heading { flex-wrap:wrap; } }
+.quota-rules-notice { width:100%; text-align:left; font-weight:400; line-height:1.5; }
+.quota-rules-notice:hover:not(:disabled) { filter:none; transform:none; border-color:#41699a; }
+.quota-rules-text { flex:1; min-width:0; }
+.quota-rules-close { flex:none; align-self:flex-start; color:var(--muted); font-size:19px; line-height:1; }
 .budget-status { color:#b6cce8; font-size:12px; line-height:1.7; margin-bottom:7px; }
 .budget-blocked { color:#ff9ca5; }
 .sync-status { color:var(--muted); font-size:11px; line-height:1.7; margin-bottom:18px; }
@@ -165,47 +172,78 @@
   }
 }
 
-/* The preview lives above the grid so scrolling containers cannot clip it. */
 .key-card { transition: border-color 180ms ease, box-shadow 180ms ease; }
 .key-card:focus-visible { outline:2px solid var(--blue); outline-offset:4px; }
 .key-card.usage-preview-active { border-color:#739dff88; box-shadow:0 14px 34px #0002,0 0 0 1px #739dff22; }
 .key-card.usage-preview-pinned { border-color:var(--blue); }
+.key-card.usage-preview-left:not(.usage-preview-detached) { border-top-left-radius:0; border-bottom-left-radius:0; }
+.key-card.usage-preview-right:not(.usage-preview-detached) { border-top-right-radius:0; border-bottom-right-radius:0; }
+.key-card.usage-preview-bottom { border-bottom-left-radius:0; border-bottom-right-radius:0; }
+.usage-connector {
+  position:fixed; z-index:8; height:2px; background:#739dff; box-shadow:0 0 10px #739dff88;
+  opacity:0; transform:scaleX(0); transition:opacity 180ms ease,transform 240ms ease; pointer-events:none;
+}
+.usage-connector[data-side="left"] { transform-origin:right center; }
+.usage-connector[data-side="right"] { transform-origin:left center; }
+.usage-connector.usage-connector-visible { opacity:1; transform:scaleX(1); }
+.usage-connector::after { content:''; position:absolute; top:-3px; width:8px; height:8px; border-radius:50%; background:#9dbbff; box-shadow:0 0 8px #739dff88; }
+.usage-connector[data-side="left"]::after { right:-4px; }
+.usage-connector[data-side="right"]::after { left:-4px; }
+.usage-preview-slot {
+  grid-column:1/-1; display:flex; align-items:flex-start; height:0; min-width:0; margin-top:-15px; overflow:hidden; scroll-margin-top:14px;
+  transition:height 260ms cubic-bezier(.2,.8,.2,1);
+}
+.usage-preview-slot[data-column="right"] { justify-content:flex-end; }
 .usage-popover {
   position:fixed; z-index:9; display:flex; flex-direction:column; padding:20px; border:1px solid #739dff55; border-radius:14px;
   background:linear-gradient(145deg,#192942f7,#0e182bf7); box-shadow:0 20px 60px #0006,0 2px 8px #0004;
   backdrop-filter:blur(18px); color:var(--text); overflow:auto; opacity:0; pointer-events:none;
-  transform:translateY(-10px); transition:opacity 180ms ease,transform 220ms cubic-bezier(.2,.8,.2,1);
+  transition:none;
 }
 .usage-popover[hidden] { display:none; }
 .usage-popover > :not(.usage-chart) { flex-shrink:0; }
-.usage-popover[data-side="left"] { transform:translateX(10px); }
-.usage-popover[data-side="right"] { transform:translateX(-10px); }
-.usage-popover[data-side="top"] { transform:translateY(10px); }
-.usage-popover.usage-popover-visible { opacity:1; transform:translate(0,0); pointer-events:auto; }
+.usage-popover[data-side="left"] { clip-path:inset(0 0 0 100%); }
+.usage-popover[data-side="right"] { clip-path:inset(0 100% 0 0); }
+.usage-popover[data-side="left"][data-detached="false"] { border-right:0; border-top-right-radius:0; border-bottom-right-radius:0; }
+.usage-popover[data-side="right"][data-detached="false"] { border-left:0; border-top-left-radius:0; border-bottom-left-radius:0; }
+.usage-popover[data-side="bottom"] { position:relative; flex:none; border-top:0; border-top-left-radius:0; border-top-right-radius:0; clip-path:inset(0 0 100% 0); }
+.usage-popover.usage-popover-visible { opacity:1; clip-path:inset(0 0 0 0); pointer-events:auto; }
 .usage-popover-head { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; }
 .usage-popover-head > div { min-width:0; }
 .usage-eyebrow { font-size:10px; letter-spacing:1px; color:var(--muted); }
 .usage-popover h3 { font-size:14px; margin:7px 0 0; overflow-wrap:anywhere; }
 .usage-preview-close { color:var(--muted); background:#ffffff08; border:1px solid #ffffff0d; border-radius:8px; font-size:20px; line-height:1; padding:3px 7px; }
-.usage-chart-total { display:flex; align-items:baseline; gap:10px; margin:20px 0 8px; }
+.usage-chart-total { display:flex; align-items:baseline; gap:10px; margin:16px 0 6px; }
 .usage-chart-total strong { font-size:25px; font-variant-numeric:tabular-nums; letter-spacing:-.7px; }
 .usage-chart-total span { font-size:11px; color:var(--muted); }
-.usage-chart { display:block; width:100%; flex:1 0 130px; min-height:130px; overflow:visible; }
+.usage-chart { display:block; width:100%; flex:1 0 160px; min-height:160px; overflow:visible; }
 .usage-chart-grid { fill:none; stroke:#ffffff0d; stroke-dasharray:3 5; }
 .usage-chart-area { fill:url(#usageChartFill); }
-.usage-chart-line { fill:none; stroke:#8bb0ff; stroke-width:2.5; stroke-linecap:round; stroke-linejoin:round; stroke-dasharray:1; stroke-dashoffset:0; animation:usage-line-reveal 550ms ease both; }
+.usage-chart-line { fill:none; stroke:#8bb0ff; stroke-width:2.5; stroke-linecap:round; stroke-linejoin:round; }
 .usage-chart-point { outline:none; cursor:crosshair; }
 .usage-chart-hit { fill:transparent; }
 .usage-chart-dot { fill:#a9c5ff; stroke:#15233a; stroke-width:2; transition:r 150ms ease; }
 .usage-chart-point:hover .usage-chart-dot,.usage-chart-point:focus .usage-chart-dot { r:5.5; fill:#fff; stroke:var(--blue); }
-.usage-chart-point text { fill:var(--muted); font-size:10px; }
-.usage-chart-detail { text-align:center; font-size:12px; font-variant-numeric:tabular-nums; color:#c9d9f5; margin:10px 0 18px; min-height:18px; }
+.usage-chart-point text { fill:var(--muted); font-size:11px; }
+.usage-chart-detail { text-align:center; font-size:12px; font-variant-numeric:tabular-nums; color:#c9d9f5; margin:8px 0 14px; min-height:18px; }
+.usage-mobile-days { display:none; }
 .usage-chart-footer { display:flex; justify-content:space-between; gap:8px; border-top:1px solid #ffffff0d; padding-top:12px; font-size:10px; color:var(--muted); }
 .usage-pin-label { color:#a3bcf5; }
 .usage-chart-empty { margin:auto 0; padding:25px 0; text-align:center; line-height:1.9; font-size:13px; color:var(--muted); }
 .usage-chart-empty small { font-size:11px; }
-@keyframes usage-line-reveal { from { stroke-dashoffset:1; } to { stroke-dashoffset:0; } }
+@media(max-width:680px) {
+  .usage-popover[data-side="bottom"] { min-height:390px; padding:18px 16px; }
+  .usage-popover h3 { font-size:16px; }
+  .usage-chart-total strong { font-size:28px; }
+  .usage-chart { flex-basis:180px; min-height:180px; }
+  .usage-chart-point text { font-size:12px; }
+  .usage-chart-detail { font-size:14px; margin:14px 0 18px; }
+  .usage-mobile-days { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:9px 16px; margin:0 0 18px; padding-top:15px; border-top:1px solid #ffffff12; }
+  .usage-mobile-days div { display:flex; justify-content:space-between; gap:6px; min-width:0; font-size:12px; font-variant-numeric:tabular-nums; }
+  .usage-mobile-days span { color:var(--muted); }
+  .usage-mobile-days strong { font-size:12px; }
+  .usage-chart-footer { font-size:11px; }
+}
 @media(prefers-reduced-motion:reduce) {
-  .usage-popover,.usage-chart-dot,.key-card { transition:none; }
-  .usage-chart-line { animation:none; }
+  .usage-popover,.usage-preview-slot,.usage-connector,.usage-chart-dot,.key-card { transition:none; }
 }

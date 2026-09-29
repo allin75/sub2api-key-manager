@@ -1,11 +1,65 @@
 const state = { csrfToken: '', keys: [], schedule: null, budget:null, role:'admin', accessKey:null, accessKeys:[], selectedAccessId:'', loadVersion:0, rewards:[], keyOrderVersion:0, accessOrderVersion:0, sorting:false, policySaving:false };
-const elements = Object.fromEntries(['loginScreen','loginForm','loginError','password','app','logoutButton','refreshButton','resetCountdown','openAddButton','usageSummary','keyGrid','addOverlay','addForm','customKey','addError','closeAddButton','cancelAddButton','quotaOverlay','quotaForm','quotaInput','quotaError','quotaDescription','closeQuotaButton','cancelQuotaButton','toast'].map(id => [id, document.getElementById(id)]));
+const budgetNotified = new Set();
+const quotaRulesNoticeStorage = 'sub2api-quota-rules-notice-v1';
+const quotaRulesNoticeLifetime = 3 * 86400000;
+let quotaRulesNoticeState = { seenAt: null, dismissed: false };
+try {
+  const saved = JSON.parse(localStorage.getItem(quotaRulesNoticeStorage));
+  if (saved && typeof saved === 'object') quotaRulesNoticeState = { seenAt: Number.isFinite(saved.seenAt) ? saved.seenAt : null, dismissed: saved.dismissed === true };
+} catch {}
+const elements = Object.fromEntries(['loginScreen','loginForm','loginError','password','app','logoutButton','refreshButton','resetCountdown','openAddButton','quotaRulesNotice','usageSummary','keyGrid','addOverlay','addForm','customKey','addError','closeAddButton','cancelAddButton','quotaOverlay','quotaForm','quotaInput','quotaError','quotaDescription','closeQuotaButton','cancelQuotaButton','toast'].map(id => [id, document.getElementById(id)]));
 
 for(const id of ['roleLabel','budgetStatus','syncStatus','budgetOverlay','budgetForm','budgetInput','budgetError','closeBudgetButton','cancelBudgetButton','saveBudgetButton']) elements[id]=document.getElementById(id);
 for(const id of ['accessManagement','accessTotals','accessSearch','accessList','currentAccess','changeSecretButton','newAccessButton','accessOverlay','accessForm','accessTitle','accessDescription','accessSecret','accessLimitField','accessLimit','accessError','closeAccessButton','cancelAccessButton','saveAccessButton','addDescription']) elements[id]=document.getElementById(id);
 for(const id of ['transferOverlay','transferForm','transferDescription','transferTarget','transferError','closeTransferButton','cancelTransferButton','saveTransferButton']) elements[id]=document.getElementById(id);
 let transferKeyId='';
 for(const id of ['budgetType','accessType','rewardList','openRewardButton','rewardOverlay','rewardForm','rewardAmount','rewardExpiry','rewardError','closeRewardButton','cancelRewardButton','saveRewardButton'])elements[id]=document.getElementById(id);
+let quotaRulesNoticeTimer = null;
+let quotaRulesNoticeObserver = null;
+
+function shouldShowQuotaRulesNotice(notice, now) {
+  return !notice.dismissed && (!Number.isFinite(notice.seenAt) || now - notice.seenAt < quotaRulesNoticeLifetime);
+}
+
+function persistQuotaRulesNotice() {
+  try { localStorage.setItem(quotaRulesNoticeStorage, JSON.stringify(quotaRulesNoticeState)); } catch {}
+}
+
+function markQuotaRulesNoticeSeen() {
+  if (quotaRulesNoticeState.dismissed || quotaRulesNoticeState.seenAt !== null) return;
+  quotaRulesNoticeState.seenAt = Date.now();
+  persistQuotaRulesNotice();
+  quotaRulesNoticeObserver?.disconnect();
+  renderQuotaRulesNotice();
+}
+
+function renderQuotaRulesNotice() {
+  clearTimeout(quotaRulesNoticeTimer);
+  const visible = shouldShowQuotaRulesNotice(quotaRulesNoticeState, Date.now());
+  elements.quotaRulesNotice.classList.toggle('hidden', !visible);
+  if (!visible) { quotaRulesNoticeObserver?.disconnect(); return; }
+  if (quotaRulesNoticeState.seenAt !== null) {
+    quotaRulesNoticeTimer = setTimeout(renderQuotaRulesNotice, Math.max(0, quotaRulesNoticeState.seenAt + quotaRulesNoticeLifetime - Date.now()));
+  } else if ('IntersectionObserver' in window) {
+    quotaRulesNoticeObserver ??= new IntersectionObserver(entries => {
+      if (!document.hidden && entries.some(entry => entry.intersectionRatio >= 0.5)) markQuotaRulesNoticeSeen();
+    }, { threshold: 0.5 });
+    quotaRulesNoticeObserver.observe(elements.quotaRulesNotice);
+  } else markQuotaRulesNoticeSeen();
+}
+
+elements.quotaRulesNotice.addEventListener('click', () => {
+  quotaRulesNoticeState.dismissed = true;
+  persistQuotaRulesNotice();
+  renderQuotaRulesNotice();
+});
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && !elements.app.classList.contains('hidden')) {
+    renderQuotaRulesNotice();
+    checkBudgetNotification();
+  }
+});
+
 function closeReward(){elements.rewardOverlay.classList.add('hidden');elements.rewardForm.reset();elements.rewardError.textContent='';}
 elements.closeRewardButton.addEventListener('click',closeReward);
 elements.cancelRewardButton.addEventListener('click',closeReward);
@@ -61,6 +115,7 @@ async function boot() {
 
 elements.loginForm.addEventListener('submit', async event => {
   event.preventDefault();
+  requestBudgetNotificationPermission();
   elements.loginError.textContent = '';
   try {
     const session = await api('/api/login', { method:'POST', body:{ password:elements.password.value } });
@@ -72,7 +127,7 @@ elements.loginForm.addEventListener('submit', async event => {
 elements.logoutButton.addEventListener('click', async () => {
   try { await api('/api/logout', { method:'POST' }); } finally { state.csrfToken=''; showLogin(); }
 });
-elements.refreshButton.addEventListener('click', () => loadKeys(true));
+elements.refreshButton.addEventListener('click', () => { requestBudgetNotificationPermission(); loadKeys(true); });
 elements.openAddButton.addEventListener('click', () => { elements.addDescription.textContent=`关联到登录密钥“${currentAccess()?.secret||''}”；完整 API Key 仅用于验证。`; elements.addOverlay.classList.remove('hidden'); elements.customKey.focus(); });
 elements.closeAddButton.addEventListener('click', closeAdd);
 elements.cancelAddButton.addEventListener('click', closeAdd);
@@ -105,6 +160,7 @@ function enterApp(session) {
   elements.rewardList.closest('.reward-panel').classList.add('hidden');
   elements.loginScreen.classList.add('hidden');
   elements.app.classList.remove('hidden');
+  renderQuotaRulesNotice();
   loadKeys();
 }
 
@@ -141,6 +197,7 @@ async function loadKeys(showMessage=false) {
     renderAccessKeys();renderCurrentAccess();
     renderSummary(); renderKeys(); renderSchedule();renderRewards();
     if(showMessage) toast(data.cached?'已显示缓存，手动刷新最多每 5 分钟一次':data.budget?.stale?'同步未完成，保留最近成功数据':'数据已刷新');
+    checkBudgetNotification();
   } catch(error) {
     if(version===state.loadVersion)elements.syncStatus.textContent=error.message;
   } finally { if(version===state.loadVersion)setBusy(elements.refreshButton,false,'刷新数据'); }
@@ -271,14 +328,49 @@ function renderSummary(){
   },{total:0,yesterday:0,today:0,week:0,month:0,lastMonth:0});
   const b=state.budget;
   const items=[['yesterday','昨日'],['today','今日'],['week','本周'],['month','本月'],['lastMonth','上月']];
-  elements.usageSummary.innerHTML=`<div class="summary-item balance-item"><div class="balance-heading"><span>余额</span>${state.role==='superadmin'?'<button class="quota-edit" id="editBudget">设置</button>':''}</div><strong>${b?.limit==null?'未设置':b.balance===null?'待同步':money(b.balance)}</strong><small>${b?.limit==null?'尚未启用月度限额':`月度总额度 ${money(b.limit)}`}</small></div>`+items.map(([id,label])=>`<div class="summary-item"><span>${label}</span><strong>${state.keys.some(k=>!k.usage)?'—':money(totals[id])}</strong></div>`).join('');
+  elements.usageSummary.innerHTML=`<div class="summary-item balance-item"><div class="balance-heading"><span>余额</span>${state.role==='superadmin'?'<button class="quota-edit" id="editBudget">设置</button>':''}</div><div class="balance-value"><strong>${b?.limit==null?'未设置':b.balance===null?'待同步':money(b.balance)}</strong>${b?.limit!=null?`<span>/ ${money(b.limit)}</span>`:''}</div></div>`+items.map(([id,label])=>`<div class="summary-item"><span>${label}</span><strong>${state.keys.some(k=>!k.usage)?'—':money(totals[id])}</strong></div>`).join('');
   const label=b?.type==='trial'?'体验总额度':'月度总额度';
-  elements.usageSummary.querySelector('.balance-item small').textContent=b?.limit==null?'尚未设置原额度':`${label} ${money(b.limit)} · 已用 ${b.used===null?'待同步':money(b.used)}`;
   document.getElementById('editBudget')?.addEventListener('click',()=>{elements.budgetType.value=b?.type||'monthly';elements.budgetInput.value=b?.limit??'';elements.budgetError.textContent='';elements.budgetOverlay.classList.remove('hidden');elements.budgetInput.focus()});
   const details=b?.limit!=null?`${label} · ${b.used===null?'用量待同步':`已计入 ${money(b.used)}`}${b.overage>0?` · 超出 ${money(b.overage)}`:''} · ${b.type==='trial'?'不自动刷新':b.monthlyResetEnabled?`下月刷新 ${formatTime(b.nextMonthAt)}`:'月刷新关闭 · 已用量持续累计'}`:'原额度由超级管理员设置后启用';
   elements.budgetStatus.textContent=`${b?.status==='blocked'?'原额度已用尽且无可用奖励，已配置 Key 暂停使用。 ':''}${details}${b?.pendingCount?` · ${b.pendingCount} 项状态变更待重试`:''}`;
   elements.budgetStatus.classList.toggle('budget-blocked',b?.status==='blocked');
   elements.syncStatus.textContent=`${b?.stale?'数据待同步 · ':''}最后成功更新：${b?.lastSuccessAt?formatTime(b.lastSuccessAt):'暂无'} · 下次检查：${b?.nextCheckAt?formatTime(b.nextCheckAt):'等待调度'}${b?.error?` · ${b.error}`:''}`;
+}
+
+function budgetNoticeKey(accessId, budget) {
+  const cycle = budget.monthlyResetEnabled ? budget.month : budget.cycleMonth || budget.month;
+  return `sub2api-budget-notified:${accessId}:${cycle}`;
+}
+
+function shouldNotifyBudget(budget, accessId, notified) {
+  return !!accessId && !notified && budget?.type === 'monthly' && !budget.stale &&
+    Number.isFinite(budget.limit) && budget.limit > 0 && Number.isFinite(budget.balance) && budget.balance <= budget.limit * 0.1;
+}
+
+function requestBudgetNotificationPermission() {
+  if ('Notification' in window && window.isSecureContext && Notification.permission === 'default') {
+    try { Promise.resolve(Notification.requestPermission()).catch(() => {}); } catch {}
+  }
+}
+
+function checkBudgetNotification() {
+  const budget = state.budget;
+  const accessId = currentAccess()?.id;
+  if (!accessId || !budget) return;
+  const key = budgetNoticeKey(accessId, budget);
+  let notified = budgetNotified.has(key);
+  try { notified ||= localStorage.getItem(key) === '1'; } catch {}
+  if (!shouldNotifyBudget(budget, accessId, notified)) return;
+  const message = `当前账号剩余 ${money(budget.balance)}，总额度 ${money(budget.limit)}。`;
+  if ('Notification' in window && Notification.permission === 'granted') {
+    try { new Notification('月度额度剩余 10% 或更少', { body: message }); }
+    catch { if (document.hidden) return; toast(`月度额度剩余 10% 或更少：${message}`); }
+  } else {
+    if (document.hidden) return;
+    toast(`月度额度剩余 10% 或更少：${message}`);
+  }
+  budgetNotified.add(key);
+  try { localStorage.setItem(key, '1'); } catch {}
 }
 
 function closeBudget(){elements.budgetOverlay?.classList.add('hidden');}
@@ -303,7 +395,7 @@ function pad(value){return String(value).padStart(2,'0')}
 function formatTime(value){if(!value)return'尚未使用';return new Intl.DateTimeFormat('zh-CN',{dateStyle:'medium',timeStyle:'short'}).format(new Date(value))}
 function formatCountdown(milliseconds){const totalMinutes=Math.max(0,Math.floor(milliseconds/60000));const days=Math.floor(totalMinutes/1440);const hours=Math.floor(totalMinutes%1440/60);const minutes=totalMinutes%60;return `${days}d${hours}h${minutes}m`}
 setInterval(renderSchedule,60000);
-setInterval(()=>{if(!elements.app.classList.contains('hidden')&&!document.hidden)loadKeys()},60000);
+setInterval(()=>{if(!elements.app.classList.contains('hidden'))loadKeys()},60000);
 function escapeHtml(value){return String(value??'').replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]))}
 function toast(message){elements.toast.textContent=message;elements.toast.classList.add('show');setTimeout(()=>elements.toast.classList.remove('show'),3000)}
 
@@ -379,30 +471,72 @@ async function saveOrder(kind,ids){
 }
 
 // One shared preview keeps pinning, timers and chart focus stable between cards.
-const usagePreview = { id: null, pinned: false, openTimer: null, closeTimer: null, suppressClickUntil: 0 };
+const usagePreview = { id: null, pinned: false, openTimer: null, closeTimer: null, hideTimer: null, scrollTimer: null, animation: null, suppressClickUntil: 0 };
 const usagePopover = document.createElement('section');
+const usagePreviewSlot = document.createElement('div');
+const usageConnector = document.createElement('div');
+usagePreviewSlot.className = 'usage-preview-slot';
+usageConnector.className = 'usage-connector';
+usageConnector.setAttribute('aria-hidden', 'true');
+usageConnector.hidden = true;
 usagePopover.id = 'usagePopover';
 usagePopover.className = 'usage-popover';
 usagePopover.setAttribute('role', 'region');
 usagePopover.setAttribute('aria-label', '最近七天用量');
 usagePopover.hidden = true;
 document.body.append(usagePopover);
+document.body.append(usageConnector);
 
 function usageCard() {
   return [...elements.keyGrid.querySelectorAll('[data-sort-id]')].find(card => card.dataset.sortId === usagePreview.id);
 }
 
+function usageClosedClip(side) {
+  return side === 'left' ? 'inset(0 0 0 100%)' : side === 'right' ? 'inset(0 100% 0 0)' : 'inset(0 0 100% 0)';
+}
+
+function animateUsagePreview(opening, currentClip, currentOpacity) {
+  usagePreview.animation?.cancel();
+  usagePreview.animation = null;
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const closed = { clipPath: usageClosedClip(usagePopover.dataset.side), opacity: 0 };
+  const open = { clipPath: 'inset(0 0 0 0)', opacity: 1 };
+  const frames = opening ? [closed, open] : [{ clipPath: currentClip, opacity: Number(currentOpacity) }, closed];
+  const animation = usagePopover.animate(frames, { duration: 300, easing: 'cubic-bezier(.2,.8,.2,1)', fill: 'both' });
+  usagePreview.animation = animation;
+  animation.onfinish = () => {
+    if (usagePreview.animation === animation) {
+      animation.cancel();
+      usagePreview.animation = null;
+    }
+  };
+}
+
 function closeUsagePreview() {
   clearTimeout(usagePreview.openTimer);
   clearTimeout(usagePreview.closeTimer);
+  clearTimeout(usagePreview.hideTimer);
+  clearTimeout(usagePreview.scrollTimer);
+  const wasVisible = !usagePopover.hidden && usagePreview.id !== null;
+  const currentClip = wasVisible ? getComputedStyle(usagePopover).clipPath : null;
+  const currentOpacity = wasVisible ? getComputedStyle(usagePopover).opacity : null;
   const card = usageCard();
-  card?.classList.remove('usage-preview-active', 'usage-preview-pinned');
+  card?.classList.remove('usage-preview-active', 'usage-preview-pinned', 'usage-preview-left', 'usage-preview-right', 'usage-preview-bottom', 'usage-preview-detached');
   card?.setAttribute('aria-expanded', 'false');
   usagePreview.id = null;
   usagePreview.pinned = false;
   usagePopover.classList.remove('usage-popover-visible');
+  if (wasVisible) animateUsagePreview(false, currentClip, currentOpacity);
+  else { usagePreview.animation?.cancel(); usagePreview.animation = null; }
+  usageConnector.classList.remove('usage-connector-visible');
   usagePopover.inert = true;
-  usagePreview.closeTimer = setTimeout(() => { usagePopover.hidden = true; }, 180);
+  usagePreviewSlot.style.height = '0px';
+  usagePreview.hideTimer = setTimeout(() => {
+    usagePopover.hidden = true;
+    usageConnector.hidden = true;
+    document.body.append(usagePopover);
+    usagePreviewSlot.remove();
+  }, 320);
 }
 
 function scheduleUsageClose() {
@@ -411,36 +545,89 @@ function scheduleUsageClose() {
   if (!usagePreview.pinned) usagePreview.closeTimer = setTimeout(closeUsagePreview, 200);
 }
 
+function usagePreviewPlacement(box, grid, viewportWidth, twoColumns) {
+  const width = Math.min(340, viewportWidth - 24);
+  const leftColumn = box.left + box.width / 2 < grid.left + grid.width / 2;
+  const side = leftColumn ? 'left' : 'right';
+  const left = leftColumn ? box.left - width : box.right;
+  if (twoColumns && left >= 12 && left + width <= viewportWidth - 12) return { side, left, width };
+  return { side: 'bottom', width: box.width, left: box.left };
+}
+
+function usagePreviewSidePosition(box, side, viewportWidth, viewportHeight) {
+  const height = Math.min(box.height, viewportHeight - 24);
+  const top = Math.max(12, Math.min(box.top, viewportHeight - height - 12));
+  const detached = Math.abs(top - box.top) > 1;
+  const gap = detached ? 16 : 0;
+  const available = side === 'left' ? box.left - 12 : viewportWidth - box.right - 12;
+  const width = Math.min(340, available - gap);
+  const left = side === 'left' ? box.left - gap - width : box.right + gap;
+  const anchorY = Math.max(top + 20, Math.min(box.top + 20, top + height - 3));
+  return { height, top, left, width, detached, gap, anchorY };
+}
+
 function positionUsagePreview() {
   const card = usageCard();
   if (!card || !usagePreview.id) return;
   const box = card.getBoundingClientRect();
-  if (box.bottom < 0 || box.top > innerHeight) { closeUsagePreview(); return; }
-  const width = Math.min(340, innerWidth - 24);
-  usagePopover.style.width = `${width}px`;
-  usagePopover.style.height = `${box.height}px`;
-  usagePopover.style.maxHeight = `${innerHeight - 24}px`;
-  const height = usagePopover.offsetHeight;
   const grid = elements.keyGrid.getBoundingClientRect();
-  const leftColumn = box.left + box.width / 2 < grid.left + grid.width / 2;
   const twoColumns = getComputedStyle(elements.keyGrid).gridTemplateColumns.split(' ').length > 1;
-  let left = leftColumn ? box.left - width - 12 : box.right + 12;
-  let top = box.top;
-  let side = leftColumn ? 'left' : 'right';
-  if (!twoColumns || left < 12 || left + width > innerWidth - 12) {
-    side = 'bottom';
-    left = box.left + (box.width - width) / 2;
-    top = box.bottom + 12;
-    if (top + height > innerHeight - 12) {
-      top = box.top - height - 12;
-      side = 'top';
+  const placement = usagePreviewPlacement(box, grid, innerWidth, twoColumns);
+  if (placement.side !== 'bottom' && (box.bottom < 24 || box.top > innerHeight - 24)) { closeUsagePreview(); return; }
+  const sidePosition = placement.side === 'bottom' ? null : usagePreviewSidePosition(box, placement.side, innerWidth, innerHeight);
+  const focused = usagePopover.contains(document.activeElement) ? document.activeElement : null;
+  const previousSide = usagePopover.dataset.side;
+  const layoutChanged = previousSide !== placement.side || (placement.side === 'bottom' && usagePopover.parentElement !== usagePreviewSlot);
+  const restartReveal = layoutChanged && usagePopover.classList.contains('usage-popover-visible');
+  card.classList.remove('usage-preview-left', 'usage-preview-right', 'usage-preview-bottom', 'usage-preview-detached');
+  card.classList.add(`usage-preview-${placement.side}`);
+  card.classList.toggle('usage-preview-detached', !!sidePosition?.detached);
+  usagePopover.dataset.side = placement.side;
+  usagePopover.dataset.detached = sidePosition?.detached ? 'true' : 'false';
+  usagePopover.style.width = `${sidePosition?.width ?? placement.width}px`;
+  if (placement.side === 'bottom') {
+    usageConnector.classList.remove('usage-connector-visible');
+    usageConnector.hidden = true;
+    const cards = [...elements.keyGrid.children].filter(child => child !== usagePreviewSlot);
+    const index = cards.indexOf(card);
+    const rowEnd = Math.min(cards.length - 1, Math.floor(index / (twoColumns ? 2 : 1)) * (twoColumns ? 2 : 1) + (twoColumns ? 1 : 0));
+    const next = cards[rowEnd + 1] || null;
+    if (usagePreviewSlot.parentElement !== elements.keyGrid || usagePreviewSlot.nextElementSibling !== next) elements.keyGrid.insertBefore(usagePreviewSlot, next);
+    usagePreviewSlot.dataset.column = twoColumns && placement.left > grid.left + grid.width / 2 ? 'right' : 'left';
+    if (usagePopover.parentElement !== usagePreviewSlot) usagePreviewSlot.append(usagePopover);
+    usagePopover.style.height = '';
+    usagePopover.style.maxHeight = '';
+    usagePopover.style.left = '';
+    usagePopover.style.top = '';
+    if (usagePopover.classList.contains('usage-popover-visible')) usagePreviewSlot.style.height = `${usagePopover.offsetHeight}px`;
+  } else {
+    if (usagePopover.parentElement !== document.body) document.body.append(usagePopover);
+    usagePreviewSlot.remove();
+    usagePreviewSlot.style.height = '0px';
+    usagePopover.style.height = `${sidePosition.height}px`;
+    usagePopover.style.maxHeight = `${innerHeight - 24}px`;
+    usagePopover.style.left = `${sidePosition.left}px`;
+    usagePopover.style.top = `${sidePosition.top}px`;
+    if (sidePosition.detached) {
+      usageConnector.dataset.side = placement.side;
+      usageConnector.style.left = `${placement.side === 'left' ? sidePosition.left + sidePosition.width : box.right}px`;
+      usageConnector.style.top = `${sidePosition.anchorY - 1}px`;
+      usageConnector.style.width = `${sidePosition.gap}px`;
+      if (usageConnector.hidden) {
+        usageConnector.hidden = false;
+        void usageConnector.offsetWidth;
+      }
+      usageConnector.classList.add('usage-connector-visible');
+    } else {
+      usageConnector.classList.remove('usage-connector-visible');
+      usageConnector.hidden = true;
     }
   }
-  const beside = side === 'left' || side === 'right';
-  if (beside) usagePopover.style.maxHeight = 'none';
-  usagePopover.dataset.side = side;
-  usagePopover.style.left = `${Math.max(12, Math.min(left, innerWidth - width - 12))}px`;
-  usagePopover.style.top = `${beside ? box.top : Math.max(12, Math.min(top, innerHeight - height - 12))}px`;
+  if (focused && !usagePopover.contains(document.activeElement)) focused.focus({ preventScroll: true });
+  if (restartReveal) {
+    animateUsagePreview(true);
+    if (placement.side === 'bottom') usagePreviewSlot.style.height = `${usagePopover.offsetHeight}px`;
+  }
 }
 
 function usageDayDetail(day) {
@@ -454,18 +641,19 @@ function renderUsageChart(key) {
   const heading = `<header class="usage-popover-head"><div><span class="usage-eyebrow">最近 7 天 · USD</span><h3>${escapeHtml(key.name)}</h3></div><button type="button" class="usage-preview-close" aria-label="关闭用量预览">×</button></header>`;
   if (!valid) return `${heading}<p class="usage-chart-empty">每日用量暂未同步<br><small>下次数据刷新后即可查看</small></p>`;
   const max = Math.max(...daily.map(day => day.cost), 0.01);
-  const points = daily.map((day, i) => ({ x: 22 + i * 46, y: 104 - day.cost / max * 76 }));
+  const points = daily.map((day, i) => ({ x: 22 + i * 46, y: 140 - day.cost / max * 112 }));
   const line = points.map((point, i) => `${i ? 'L' : 'M'}${point.x},${point.y}`).join(' ');
   const total = daily.reduce((sum, day) => sum + day.cost, 0);
   const detail = usageDayDetail;
   return `${heading}<div class="usage-chart-total"><strong>${money(total)}</strong><span>七天合计</span></div>
-    <svg class="usage-chart" viewBox="0 0 320 140" role="img" aria-label="最近七天每日实际消费折线图">
+    <svg class="usage-chart" viewBox="0 0 320 180" role="img" aria-label="最近七天每日实际消费折线图">
       <defs><linearGradient id="usageChartFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#739dff" stop-opacity=".26"/><stop offset="100%" stop-color="#739dff" stop-opacity="0"/></linearGradient></defs>
-      ${[28,66,104].map(y => `<path class="usage-chart-grid" d="M16,${y} H304"/>`).join('')}
-      <path class="usage-chart-area" d="${line} L298,104 L22,104 Z"/>
+      ${[28,84,140].map(y => `<path class="usage-chart-grid" d="M16,${y} H304"/>`).join('')}
+      <path class="usage-chart-area" d="${line} L298,140 L22,140 Z"/>
       <path class="usage-chart-line" pathLength="1" d="${line}"/>
-      ${points.map((point, i) => `<g class="usage-chart-point" tabindex="0" data-day="${i}" aria-label="${escapeHtml(detail(daily[i]))}"><circle class="usage-chart-hit" cx="${point.x}" cy="${point.y}" r="14"/><circle class="usage-chart-dot" cx="${point.x}" cy="${point.y}" r="3.5"/><text x="${point.x}" y="130" text-anchor="middle">${daily[i].date.slice(5).replace('-', '/')}</text></g>`).join('')}
+      ${points.map((point, i) => `<g class="usage-chart-point" tabindex="0" data-day="${i}" aria-label="${escapeHtml(detail(daily[i]))}"><circle class="usage-chart-hit" cx="${point.x}" cy="${point.y}" r="14"/><circle class="usage-chart-dot" cx="${point.x}" cy="${point.y}" r="3.5"/><text x="${point.x}" y="169" text-anchor="middle">${daily[i].date.slice(5).replace('-', '/')}</text></g>`).join('')}
     </svg><p class="usage-chart-detail" aria-live="polite">${detail(daily[6])}</p>
+    <div class="usage-mobile-days" aria-label="最近七天每日用量">${daily.map(day => `<div><span>${day.date.slice(5).replace('-', '/')}</span><strong>$${day.cost.toFixed(4)}</strong></div>`).join('')}</div>
     <footer class="usage-chart-footer"><span>${state.budget?.stale || key.error ? '缓存数据 · 待同步' : '北京时间 · 实际消费'}</span><span class="usage-pin-label"></span></footer>`;
 }
 
@@ -475,10 +663,18 @@ function openUsagePreview(card, pinned = false, refresh = false) {
   if (!key?.matched) return;
   clearTimeout(usagePreview.openTimer);
   clearTimeout(usagePreview.closeTimer);
+  clearTimeout(usagePreview.hideTimer);
+  clearTimeout(usagePreview.scrollTimer);
   const changed = usagePreview.id !== key.id;
   if (changed) {
-    usageCard()?.classList.remove('usage-preview-active', 'usage-preview-pinned');
+    usagePreview.animation?.cancel();
+    usagePreview.animation = null;
+    usageCard()?.classList.remove('usage-preview-active', 'usage-preview-pinned', 'usage-preview-left', 'usage-preview-right', 'usage-preview-bottom', 'usage-preview-detached');
     usageCard()?.setAttribute('aria-expanded', 'false');
+    usagePopover.classList.remove('usage-popover-visible');
+    usageConnector.classList.remove('usage-connector-visible');
+    usageConnector.hidden = true;
+    usagePreviewSlot.style.height = '0px';
   }
   usagePreview.id = key.id;
   usagePreview.pinned = pinned;
@@ -501,12 +697,16 @@ function openUsagePreview(card, pinned = false, refresh = false) {
   card.setAttribute('aria-expanded', 'true');
   usagePopover.hidden = false;
   usagePopover.inert = false;
-  if (changed) usagePopover.classList.remove('usage-popover-visible');
   positionUsagePreview();
   if (!usagePreview.id) return;
-  // Commit the initial direction before starting the transition.
-  void usagePopover.offsetWidth;
   usagePopover.classList.add('usage-popover-visible');
+  if (changed) animateUsagePreview(true);
+  if (usagePopover.dataset.side === 'bottom') usagePreviewSlot.style.height = `${usagePopover.offsetHeight}px`;
+  if (changed && pinned && usagePopover.dataset.side === 'bottom' && matchMedia('(max-width: 680px)').matches) {
+    usagePreview.scrollTimer = setTimeout(() => {
+      if (usagePreview.id === key.id && usagePreview.pinned) usagePreviewSlot.scrollIntoView({ block: 'start', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+    }, 320);
+  }
 }
 
 function mountUsagePreview() {
@@ -530,7 +730,7 @@ function mountUsagePreview() {
       else openUsagePreview(card, true);
     };
     card.addEventListener('click', event => {
-      if (!event.target.closest('button, input, select, a, label') && !window.getSelection()?.toString()) toggle();
+      if (!event.target.closest('button, input, select, a, label, .usage-popover') && !window.getSelection()?.toString()) toggle();
     });
     card.addEventListener('keydown', event => {
       if (event.target !== card || !['Enter', ' '].includes(event.key)) return;
