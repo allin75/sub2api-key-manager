@@ -60,7 +60,7 @@ node --env-file=.env src/server.js
 - `POST /api/notices/:id/acknowledge`：接收人确认自己的公告，重复确认不改写首次时间。
 - `DELETE /api/access-keys/:id/notices/:noticeId`：超级管理员删除该账号的一条公告。
 
-本地假数据截图在 `docs/screenshots/2026-09-30-targeted-notice-*.png`。本次定向公告先提供本地预览，尚未部署 NAS。
+本地假数据截图在 `docs/screenshots/2026-09-30-targeted-notice-*.png`。定向公告已随 `v1.2.0` 发布并部署 NAS，实际部署提交、验证与备份路径见 [项目交接记录](docs/PROJECT_HANDOFF.md)。
 
 ### 公告与动画
 
