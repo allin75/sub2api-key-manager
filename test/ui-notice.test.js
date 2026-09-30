@@ -7,6 +7,12 @@ const source = await fs.readFile(new URL('../public/app.js', import.meta.url), '
 const animationFunctions = source.slice(source.indexOf('function shouldRequireAnnouncement('), source.indexOf('function dockAnnouncement('));
 const acknowledgementFunction = source.slice(source.indexOf('async function acknowledgeAnnouncement('), source.indexOf('elements.openAnnouncementButton.addEventListener('));
 
+test('the viewport reserves scrollbar space while the announcement locks background scrolling', async () => {
+  const styles = await fs.readFile(new URL('../public/overrides.css', import.meta.url), 'utf8');
+  assert.match(styles, /(?:^|\n)html\s*\{[^}]*scrollbar-gutter:\s*stable\s*;/);
+  assert.match(styles, /\.announcement-open\s*\{[^}]*overflow:\s*hidden\s*;/);
+});
+
 test('an announcement requires explicit acknowledgement of the current session version', () => {
   const context = vm.createContext({});
   vm.runInContext(animationFunctions, context);

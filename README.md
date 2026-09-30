@@ -54,6 +54,8 @@ node --env-file=.env src/server.js
 
 Anime.js 4.5.0 的未修改浏览器发行文件和 MIT 许可证位于 `public/vendor/`，无运行时 CDN 请求，不放宽内容安全策略。公告到导航栏的布局过渡只在临时动画层内执行，不参与整页布局；退出或会话过期会清理未结束的动画。
 
+页面根元素持续保留滚动条占位，公告打开时仍锁定背景滚动，关闭时恢复滚动；开关及收缩过程不改变页面宽度，避免左右晃动。手机使用覆盖式滚动条时不会额外占位。
+
 收起时遮罩淡出结束后保持透明，直到布局过渡全部完成再隐藏并清理样式，避免末段重置遮罩导致闪屏；取消动画时仍恢复原始样式。
 
 本地假数据界面截图：[桌面公告](docs/screenshots/2026-09-30-announcement-desktop.png)、[桌面导航](docs/screenshots/2026-09-30-announcement-navigation.png)、[手机公告](docs/screenshots/2026-09-30-announcement-mobile.png)、[手机导航](docs/screenshots/2026-09-30-announcement-mobile-navigation.png)。
