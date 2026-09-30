@@ -47,6 +47,66 @@ test('cancelling UI transitions restores styles and releases pending login steps
   assert.equal(context.activeUiAnimations.size, 0);
 });
 
+function animationContext(target) {
+  let completion;
+  const context = vm.createContext({
+    window: { matchMedia: () => ({ matches: false }) },
+    activeUiAnimations: new Set(),
+    reverted: 0,
+    anime: {
+      animate: (element, parameters) => {
+        completion = parameters.onComplete;
+        return { revert: () => { context.reverted++; element.style.opacity = '1'; } };
+      }
+    }
+  });
+  vm.runInContext(animationFunctions, context);
+  return { context, complete: () => { target.style.opacity = '0'; completion(); } };
+}
+
+test('completed backdrop fade stays transparent until the longer layout transition finishes', async () => {
+  const target = { style: { opacity: '1' } };
+  const { context, complete } = animationContext(target);
+  const pending = context.animateUi(target, { opacity: [1, 0] }, { restoreOnComplete: false });
+  complete();
+  await pending;
+  assert.equal(target.style.opacity, '0');
+  assert.equal(context.reverted, 0);
+  assert.equal(context.activeUiAnimations.size, 0);
+});
+
+test('cancelling a persistent backdrop fade still restores styles and releases the transition', async () => {
+  const target = { style: { opacity: '1' } };
+  const { context } = animationContext(target);
+  const pending = context.animateUi(target, { opacity: [1, 0] }, { restoreOnComplete: false });
+  target.style.opacity = '.5';
+  context.cancelUiAnimations();
+  await pending;
+  assert.equal(target.style.opacity, '1');
+  assert.equal(context.reverted, 1);
+  assert.equal(context.activeUiAnimations.size, 0);
+});
+
+test('ordinary completed UI animations still restore their original styles', async () => {
+  const target = { style: { opacity: '1' } };
+  const { context, complete } = animationContext(target);
+  const pending = context.animateUi(target, { opacity: [1, 0] });
+  complete();
+  await pending;
+  assert.equal(target.style.opacity, '1');
+  assert.equal(context.reverted, 1);
+});
+
+test('announcement has a centered SVG close icon and no logout action inside its dialog', async () => {
+  const html = await fs.readFile(new URL('../public/index.html', import.meta.url), 'utf8');
+  assert.match(html, /id="closeAnnouncementButton"[^>]*>\s*<svg/);
+  assert.doesNotMatch(html, /announcementLogoutButton/);
+  assert.match(html, /id="logoutButton"/);
+  const actions = html.match(/<div class="announcement-actions">(.*?)<\/div>/s)?.[1];
+  assert.ok(actions);
+  assert.equal((actions.match(/<button/g) || []).length, 1);
+});
+
 function acknowledgementContext(api) {
   const context = vm.createContext({
     state: { announcement: { version: 'current', acknowledged: false } },
@@ -109,7 +169,7 @@ test('Escape never dismisses a required announcement but can fold a reviewed one
     announcementSaving: false,
     foldAnnouncement: () => { folded++; }
   });
-  vm.runInContext(animationFunctions + source.slice(source.indexOf("elements.announcementDialog.addEventListener('cancel'"), source.indexOf('elements.announcementLogoutButton.addEventListener(')), context);
+  vm.runInContext(animationFunctions + source.slice(source.indexOf("elements.announcementDialog.addEventListener('cancel'"), source.indexOf("document.addEventListener('visibilitychange'")), context);
   cancelHandler({ preventDefault: () => { prevented++; } });
   assert.equal(prevented, 1);
   assert.equal(folded, 0);

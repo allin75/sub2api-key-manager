@@ -7,7 +7,7 @@ for(const id of ['accessManagement','accessTotals','accessSearch','accessList','
 for(const id of ['transferOverlay','transferForm','transferDescription','transferTarget','transferError','closeTransferButton','cancelTransferButton','saveTransferButton']) elements[id]=document.getElementById(id);
 let transferKeyId='';
 for(const id of ['budgetType','accessType','rewardList','openRewardButton','rewardOverlay','rewardForm','rewardAmount','rewardExpiry','rewardError','closeRewardButton','cancelRewardButton','saveRewardButton'])elements[id]=document.getElementById(id);
-for (const id of ['sessionLoading','loginButton','topbar','announcementSlot','announcementSurface','openAnnouncementButton','announcementDot','announcementDialog','announcementShade','announcementTitle','announcementHint','announcementBody','announcementError','closeAnnouncementButton','acknowledgeAnnouncementButton','announcementLogoutButton']) elements[id] = document.getElementById(id);
+for (const id of ['sessionLoading','loginButton','topbar','announcementSlot','announcementSurface','openAnnouncementButton','announcementDot','announcementDialog','announcementShade','announcementTitle','announcementHint','announcementBody','announcementError','closeAnnouncementButton','acknowledgeAnnouncementButton']) elements[id] = document.getElementById(id);
 const activeUiAnimations = new Set();
 let viewVersion = 0;
 let loginAttempt = 0;
@@ -25,17 +25,17 @@ function canAnimateUi() {
   return !!globalThis.anime && !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 }
 
-function animateUi(target, parameters) {
+function animateUi(target, parameters, { restoreOnComplete = true } = {}) {
   if (!canAnimateUi()) return Promise.resolve();
   return new Promise(resolve => {
     let animation;
-    const finish = () => {
-      animation?.revert();
+    const finish = (completed = false) => {
+      if (!completed || restoreOnComplete) animation?.revert();
       activeUiAnimations.delete(finish);
       resolve();
     };
     activeUiAnimations.add(finish);
-    try { animation = globalThis.anime.animate(target, { ...parameters, onComplete: finish }); }
+    try { animation = globalThis.anime.animate(target, { ...parameters, onComplete: () => finish(true) }); }
     catch { finish(); }
   });
 }
@@ -61,6 +61,7 @@ function resetAnnouncement() {
   announcementSaving = false;
   elements.topbar.classList.remove('announcement-folding');
   elements.announcementShade.classList.add('hidden');
+  elements.announcementShade.style.removeProperty('opacity');
   document.body.classList.remove('announcement-open');
   elements.announcementError.textContent = '';
 }
@@ -113,7 +114,7 @@ async function foldAnnouncement() {
         elements.announcementSurface.classList.add('is-docked');
         destination.append(elements.announcementSurface);
       });
-      await Promise.all([transition.then(), animateUi(elements.announcementShade, { opacity: [1, 0], duration: 440, ease: 'inOut(3)' })]);
+      await Promise.all([transition.then(), animateUi(elements.announcementShade, { opacity: [1, 0], duration: 440, ease: 'inOut(3)' }, { restoreOnComplete: false })]);
     } catch { dockAnnouncement(); }
   } else dockAnnouncement();
   if (version !== viewVersion) return;
@@ -151,7 +152,6 @@ elements.announcementDialog.addEventListener('cancel', event => {
   event.preventDefault();
   if (!shouldRequireAnnouncement(state.announcement) && !announcementSaving) void foldAnnouncement();
 });
-elements.announcementLogoutButton.addEventListener('click', logout);
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden && !elements.app.classList.contains('hidden')) {
     checkBudgetNotification();
@@ -245,7 +245,6 @@ async function logout() {
   if (loggingOut) return;
   loggingOut = true;
   setBusy(elements.logoutButton, true, '退出中…');
-  setBusy(elements.announcementLogoutButton, true, '退出中…');
   try { await api('/api/logout', { method: 'POST' }); }
   catch {}
   finally { showLogin(); }
@@ -306,7 +305,6 @@ function showLogin() {
   elements.loginForm.setAttribute('aria-busy', 'false');
   setBusy(elements.loginButton, false, '登录');
   setBusy(elements.logoutButton, false, '退出登录');
-  setBusy(elements.announcementLogoutButton, false, '退出登录');
   elements.password.disabled = false;
   closeUsagePreview();
   closeBudget(); closeAdd(); closeQuota(); closeAccess(); closeTransfer(); closeReward();

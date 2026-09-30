@@ -5,9 +5,9 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Sub2API Key 用量管理</title>
   <link rel="stylesheet" href="/styles.css">
-  <link rel="stylesheet" href="/overrides.css?v=20260930-1">
+  <link rel="stylesheet" href="/overrides.css?v=20260930-2">
   <script src="/vendor/anime.umd.min.js?v=4.5.0" defer></script>
-  <script src="/app.js?v=20260930-1" defer></script>
+  <script src="/app.js?v=20260930-2" defer></script>
 </head>
 <body>
   <div class="session-loading" id="sessionLoading" role="status"><div class="brand-mark">S2</div><span>正在加载…</span></div>
@@ -32,12 +32,12 @@
           <div class="announcement-surface is-docked" id="announcementSurface">
             <button class="announcement-nav-button" id="openAnnouncementButton" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="announcementDialog"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="m4 10 13-5v14L4 14zM4 10H2v4h2m3 1 1 5h3l-1-4M21 8v8"/></svg><span>公告</span><span class="announcement-dot hidden" id="announcementDot" aria-hidden="true"></span></button>
             <section class="announcement-expanded">
-              <div class="announcement-head"><div><p class="announcement-eyebrow">重要公告 · 额度规则</p><h2 id="announcementTitle">使用前，请先了解额度规则</h2></div><button class="announcement-close hidden" id="closeAnnouncementButton" type="button" aria-label="收起公告">×</button></div>
+              <div class="announcement-head"><div><p class="announcement-eyebrow">重要公告 · 额度规则</p><h2 id="announcementTitle">使用前，请先了解额度规则</h2></div><button class="announcement-close hidden" id="closeAnnouncementButton" type="button" aria-label="收起公告"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button></div>
               <p class="announcement-hint" id="announcementHint">请阅读以下规则，点击“我已知晓”后继续使用。</p>
               <div class="announcement-body" id="announcementBody"></div>
               <p class="announcement-footnote">确认后公告会收纳到顶部，随时可以再次查看。</p>
               <div class="announcement-error" id="announcementError" role="alert"></div>
-              <div class="announcement-actions"><button class="text-button" id="announcementLogoutButton" type="button">退出登录</button><button class="primary" id="acknowledgeAnnouncementButton" type="button">我已知晓</button></div>
+              <div class="announcement-actions"><button class="primary" id="acknowledgeAnnouncementButton" type="button">我已知晓</button></div>
             </section>
           </div>
         </div>
