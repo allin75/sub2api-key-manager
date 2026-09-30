@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { hashKey } from './utils.js';
+import { validTargetedNotices } from './announcement.js';
 
 const dataDir = process.env.DATA_DIR || '/data';
 const dataFile = path.join(dataDir, 'state.json');
@@ -136,6 +137,7 @@ async function persist() {
 }
 
 function validateState(value) {
+  if (value.targetedNotices !== undefined && !validTargetedNotices(value.targetedNotices, value.accessKeys)) throw new Error('定向公告记录无效');
   if (value.announcementAcknowledgements !== undefined) {
     const acknowledgements = value.announcementAcknowledgements;
     if (!acknowledgements || typeof acknowledgements !== 'object' || Array.isArray(acknowledgements)) throw new Error('公告确认记录无效');

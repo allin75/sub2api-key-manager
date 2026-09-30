@@ -12,3 +12,32 @@ export const announcement = Object.freeze({
 export function announcementView(acknowledgement) {
   return { ...announcement, acknowledged: acknowledgement?.version === announcement.version };
 }
+
+export function noticeInput(body) {
+  const title = typeof body?.title === 'string' ? body.title.trim() : '';
+  const text = typeof body?.body === 'string' ? body.body.trim() : '';
+  if (!title || title.length > 100 || /[\u0000-\u001f\u007f]/.test(title)) throw new Error('公告标题需为 1–100 个字符');
+  if (!text || text.length > 4000 || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(text)) throw new Error('公告内容需为 1–4000 个字符');
+  return { title, body: text };
+}
+
+export function targetedNoticeView(notice) {
+  return { ...notice, version: notice.id, acknowledged: !!notice.acknowledgedAt, items: [{ title: '管理员通知', text: notice.body }] };
+}
+
+export function validTargetedNotices(notices, accessKeys) {
+  if (!Array.isArray(notices)) return false;
+  const ids = new Set();
+  return notices.every(notice => {
+    if (!notice || typeof notice.id !== 'string' || !notice.id || notice.id.length > 128 || ids.has(notice.id) ||
+        !accessKeys?.some(account => account.id === notice.accessKeyId) ||
+        typeof notice.publishedAt !== 'string' || !Number.isFinite(Date.parse(notice.publishedAt)) ||
+        (notice.acknowledgedAt !== null && (typeof notice.acknowledgedAt !== 'string' || !Number.isFinite(Date.parse(notice.acknowledgedAt))))) return false;
+    try {
+      const input = noticeInput(notice);
+      if (input.title !== notice.title || input.body !== notice.body) return false;
+    } catch { return false; }
+    ids.add(notice.id);
+    return true;
+  });
+}

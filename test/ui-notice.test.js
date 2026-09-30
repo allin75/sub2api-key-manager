@@ -22,6 +22,104 @@ test('an announcement requires explicit acknowledgement of the current session v
   assert.equal(context.shouldRequireAnnouncement({ version: 'current', acknowledged: 'true' }), true);
 });
 
+test('targeted announcements are queued before rules and acknowledgements leave the history intact', () => {
+  const notice = { id: 'notice', version: 'notice', acknowledged: false };
+  const policy = { version: 'policy', acknowledged: false };
+  const context = vm.createContext({ state: { notices: [notice], policyAnnouncement: policy } });
+  vm.runInContext(animationFunctions, context);
+  assert.equal(context.pendingAnnouncement(), notice);
+  notice.acknowledged = true;
+  assert.equal(context.pendingAnnouncement(), policy);
+  policy.acknowledged = true;
+  assert.equal(context.pendingAnnouncement(), null);
+  assert.equal(context.state.notices.length, 1);
+});
+
+function noticeComposerContext() {
+  const pending = [];
+  const context = vm.createContext({
+    state: { role: 'superadmin', accessKeys: [{ id: 'first', secret: 'first' }, { id: 'second', secret: 'second' }] },
+    noticeComposerAccessId: '', noticeComposerVersion: 0, noticeComposerBusy: false, viewVersion: 1,
+    document: { body: { classList: { add() {}, remove() {} } } },
+    elements: {
+      noticeComposer: { open: false, close() { this.open = false; }, showModal() { this.open = true; } },
+      noticeComposerForm: { reset() {} }, noticeComposerError: { textContent: '' },
+      noticeHistory: { innerHTML: '', querySelectorAll: () => [] }, noticePublishButton: {},
+      noticeRecipient: { textContent: '' }, noticeTitleInput: { value: '', focus() {} }, noticeBodyInput: { value: '' }
+    },
+    api: url => new Promise((resolve, reject) => { pending.push({ url, resolve, reject }); }),
+    escapeHtml: value => String(value), formatTime: value => value, toast() {},
+    setBusy: (button, busy, text) => { button.disabled = busy; button.textContent = text; }
+  });
+  vm.runInContext(source.slice(source.indexOf('function closeNoticeComposer('), source.indexOf("elements.noticeComposerForm.addEventListener('submit'")), context);
+  return { context, pending };
+}
+
+test('late notice history never replaces a different administrator composer', async () => {
+  const { context, pending } = noticeComposerContext();
+  const first = context.openNoticeComposer('first');
+  const second = context.openNoticeComposer('second');
+  pending[1].resolve({ notices: [{ id: 'second-notice', title: 'second title', body: 'second body', publishedAt: 'now', acknowledged: false }] });
+  await second;
+  pending[0].resolve({ notices: [{ id: 'first-notice', title: 'first title', body: 'first body', publishedAt: 'now', acknowledged: false }] });
+  await first;
+  assert.equal(context.elements.noticeRecipient.textContent, 'second');
+  assert.match(context.elements.noticeHistory.innerHTML, /second title/);
+  assert.doesNotMatch(context.elements.noticeHistory.innerHTML, /first title/);
+});
+
+test('failed notice publishing retains the draft, prevents duplicate submits and releases retry', async () => {
+  const { context, pending } = noticeComposerContext();
+  const opened = context.openNoticeComposer('first');
+  pending[0].resolve({ notices: [] }); await opened;
+  context.elements.noticeTitleInput.value = 'draft title';
+  context.elements.noticeBodyInput.value = 'draft body';
+  const saved = context.saveTargetedNotice({ preventDefault() {} });
+  await context.saveTargetedNotice({ preventDefault() {} });
+  assert.equal(pending.length, 2);
+  pending[1].reject(new Error('保存失败')); await saved;
+  assert.equal(context.elements.noticeTitleInput.value, 'draft title');
+  assert.equal(context.elements.noticeBodyInput.value, 'draft body');
+  assert.equal(context.elements.noticeComposerError.textContent, '保存失败');
+  assert.equal(context.elements.noticePublishButton.disabled, false);
+  assert.equal(context.noticeComposerBusy, false);
+});
+
+test('closing a publishing composer cannot write feedback into another account or session', async () => {
+  const { context, pending } = noticeComposerContext();
+  const opened = context.openNoticeComposer('first');
+  pending[0].resolve({ notices: [] }); await opened;
+  const saved = context.saveTargetedNotice({ preventDefault() {} });
+  context.viewVersion++;
+  context.closeNoticeComposer();
+  const second = context.openNoticeComposer('second');
+  pending[2].resolve({ notices: [] }); await second;
+  pending[1].resolve({ notices: [{ id: 'old', title: 'old account title', body: 'old body', publishedAt: 'now', acknowledged: false }] });
+  await saved;
+  assert.equal(context.elements.noticeRecipient.textContent, 'second');
+  assert.doesNotMatch(context.elements.noticeHistory.innerHTML, /old account title/);
+  context.state.role = 'admin';
+  await context.openNoticeComposer('first');
+  await context.saveTargetedNotice({ preventDefault() {} });
+  assert.equal(pending.length, 3);
+});
+
+test('opening an inbox cannot continue after its session changes during refresh', async () => {
+  let finishRefresh;
+  const context = vm.createContext({
+    viewVersion: 1, announcementClosing: false, opened: 0,
+    state: { csrfToken: 'first-session' }, elements: { announcementDialog: { open: false } },
+    refreshOwnNotices: () => new Promise(resolve => { finishRefresh = resolve; }),
+    pendingAnnouncement: () => null, openAnnouncement: () => { context.opened++; }
+  });
+  vm.runInContext(source.slice(source.indexOf('async function openAnnouncementInbox('), source.indexOf("elements.openAnnouncementButton.addEventListener('click'")), context);
+  const pending = context.openAnnouncementInbox();
+  context.viewVersion++;
+  context.state.csrfToken = 'new-session';
+  finishRefresh(); await pending;
+  assert.equal(context.opened, 0);
+});
+
 test('UI transitions finish without an animation library or with reduced motion', async () => {
   let animated = 0;
   const context = vm.createContext({

@@ -19,6 +19,9 @@ test('announcement records validate, survive restart and stay intact during scop
       await assert.rejects(store.saveState({ ...snapshot, announcementAcknowledgements: invalid }), /公告确认记录无效/);
     }
     snapshot.announcementAcknowledgements = { [identity]: record };
+    const notice = { id: 'notice-test', accessKeyId: snapshot.accessKeys[0].id, title: '定向通知', body: '第一行\n第二行', publishedAt: '2026-09-30T00:00:00.000Z', acknowledgedAt: null };
+    for (const invalid of [null, {}, [notice, notice], [{ ...notice, accessKeyId: 'missing' }], [{ ...notice, acknowledgedAt: 'invalid' }]]) await assert.rejects(store.saveState({ ...snapshot, targetedNotices: invalid }), /定向公告记录无效/);
+    snapshot.targetedNotices = [notice];
     await store.saveState(snapshot);
     const scoped = store.scopedStore(snapshot.accessKeys[0].id);
     const budgetState = scoped.getState();
@@ -27,6 +30,7 @@ test('announcement records validate, survive restart and stay intact during scop
     const reloaded = await import(`../src/store.js?announcementReload=${Date.now()}`);
     await reloaded.loadStore();
     assert.deepEqual(reloaded.getState().announcementAcknowledgements, { [identity]: record });
+    assert.deepEqual(reloaded.getState().targetedNotices, [notice]);
     assert.equal(reloaded.getState().accessKeys[0].state.budget.limit, 25);
   } finally {
     if (previousDirectory === undefined) delete process.env.DATA_DIR;

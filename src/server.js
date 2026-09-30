@@ -9,7 +9,7 @@ import { UpstreamError } from './sub2api.js';
 import { KeyManager, ManagerError } from './manager.js';
 import { safeEqual, hashKey } from './utils.js';
 import { reordered, closeAccountingWindow } from './budget-policy.js';
-import { announcement, announcementView } from './announcement.js';
+import { announcement, announcementView, noticeInput, targetedNoticeView } from './announcement.js';
 
 const port = Number(process.env.PORT || 3000);
 const adminPassword = process.env.ADMIN_PASSWORD || '111';
@@ -92,6 +92,54 @@ async function handleApi(request, response, url) {
   if (method !== 'GET' && method !== 'HEAD') requireCsrf(request, session);
 
   if (method === 'GET' && url.pathname === '/api/session') return sendJson(response,200,sessionView(session));
+  if (method === 'GET' && url.pathname === '/api/notices') return sendJson(response, 200, { notices: ownNotices(session) });
+  const noticeAcknowledgement = url.pathname.match(/^\/api\/notices\/([^/]+)\/acknowledge$/);
+  if (method === 'POST' && noticeAcknowledgement) {
+    await exclusive(async () => {
+      const next = store.getState();
+      const notice = next.targetedNotices?.find(item => item.id === noticeAcknowledgement[1] && item.accessKeyId === session.accessKeyId);
+      if (!notice) throw new HttpError('公告不存在或已被删除', 404);
+      if (notice.acknowledgedAt) return;
+      notice.acknowledgedAt = new Date().toISOString();
+      await store.saveState(next);
+    });
+    const notices = ownNotices(session);
+    return sendJson(response, 200, { notice: notices.find(item => item.id === noticeAcknowledgement[1]), notices });
+  }
+  const targetedNoticeRoute = url.pathname.match(/^\/api\/access-keys\/([^/]+)\/notices(?:\/([^/]+))?$/);
+  if (targetedNoticeRoute) {
+    requireSuperadmin(session);
+    const accessKeyId = targetedNoticeRoute[1];
+    if (!store.getState().accessKeys.some(account => account.id === accessKeyId)) throw new HttpError('登录密钥不存在', 404);
+    const list = () => (store.getState().targetedNotices || []).filter(item => item.accessKeyId === accessKeyId).reverse().map(targetedNoticeView);
+    if (method === 'GET' && !targetedNoticeRoute[2]) return sendJson(response, 200, { notices: list() });
+    if (method === 'POST' && !targetedNoticeRoute[2]) {
+      let input;
+      try { input = noticeInput(await readBody(request)); }
+      catch (error) { throw error instanceof HttpError ? error : new HttpError(error.message, 400); }
+      const notice = await exclusive(async () => {
+        const next = store.getState();
+        if (!next.accessKeys.some(account => account.id === accessKeyId)) throw new HttpError('登录密钥不存在', 404);
+        const notice = { id: crypto.randomUUID(), accessKeyId, ...input, publishedAt: new Date().toISOString(), acknowledgedAt: null };
+        next.targetedNotices ??= [];
+        next.targetedNotices.push(notice);
+        await store.saveState(next);
+        return notice;
+      });
+      return sendJson(response, 201, { notice: targetedNoticeView(notice), notices: list() });
+    }
+    if (method === 'DELETE' && targetedNoticeRoute[2]) {
+      await exclusive(async () => {
+        const next = store.getState();
+        const index = next.targetedNotices?.findIndex(item => item.id === targetedNoticeRoute[2] && item.accessKeyId === accessKeyId) ?? -1;
+        if (index < 0) throw new HttpError('公告不存在或已被删除', 404);
+        next.targetedNotices.splice(index, 1);
+        await store.saveState(next);
+      });
+      return sendJson(response, 200, { notices: list() });
+    }
+    throw new HttpError('请求方式无效', 405);
+  }
   if (method === 'POST' && url.pathname === '/api/announcement/acknowledge') {
     const body = await readBody(request);
     if (body?.version !== announcement.version) throw new HttpError('公告已更新，请刷新页面后重新确认', 409);
@@ -312,7 +360,11 @@ function sessionView(session) {
   const snapshot = store.getState();
   const entry = snapshot.accessKeys.find(item => item.id === session.accessKeyId);
   const notice = announcementView(snapshot.announcementAcknowledgements?.[announcementIdentity(session)]);
-  return { authenticated: true, csrfToken: session.csrfToken, role: session.role, accessKey: entry ? accessKeyView(entry) : null, announcement: notice };
+  return { authenticated: true, csrfToken: session.csrfToken, role: session.role, accessKey: entry ? accessKeyView(entry) : null, announcement: notice, notices: ownNotices(session) };
+}
+
+function ownNotices(session) {
+  return (store.getState().targetedNotices || []).filter(notice => notice.accessKeyId === session.accessKeyId).reverse().map(targetedNoticeView);
 }
 
 function announcementIdentity(session) {

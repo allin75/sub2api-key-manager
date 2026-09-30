@@ -9,6 +9,13 @@ let transferKeyId='';
 for(const id of ['budgetType','accessType','rewardList','openRewardButton','rewardOverlay','rewardForm','rewardAmount','rewardExpiry','rewardError','closeRewardButton','cancelRewardButton','saveRewardButton'])elements[id]=document.getElementById(id);
 for (const id of ['sessionLoading','loginButton','topbar','announcementSlot','announcementSurface','openAnnouncementButton','announcementDot','announcementDialog','announcementShade','announcementTitle','announcementHint','announcementBody','announcementError','closeAnnouncementButton','acknowledgeAnnouncementButton']) elements[id] = document.getElementById(id);
 const activeUiAnimations = new Set();
+for (const id of ['announcementEyebrow','announcementFootnote','noticeComposer','noticeComposerForm','noticeRecipient','noticeTitleInput','noticeBodyInput','noticePublishButton','noticeComposerError','noticeHistory','closeNoticeComposerButton']) elements[id] = document.getElementById(id);
+state.notices = [];
+state.policyAnnouncement = null;
+let noticeComposerAccessId = '';
+let noticeComposerVersion = 0;
+let noticeComposerBusy = false;
+let noticeSyncing = false;
 let viewVersion = 0;
 let loginAttempt = 0;
 let announcementLayout = null;
@@ -19,6 +26,15 @@ let loggingOut = false;
 
 function shouldRequireAnnouncement(notice) {
   return !!notice?.version && notice.acknowledged !== true;
+}
+
+function pendingAnnouncement() {
+  return (state.notices || []).find(shouldRequireAnnouncement) || (shouldRequireAnnouncement(state.policyAnnouncement) ? state.policyAnnouncement : null);
+}
+
+function updateAnnouncementIndicator() {
+  if (pendingAnnouncement()) elements.announcementDot.classList.remove('hidden');
+  else elements.announcementDot.classList.add('hidden');
 }
 
 function canAnimateUi() {
@@ -72,9 +88,12 @@ function openAnnouncement() {
   if (!state.announcement || elements.announcementDialog.open || announcementClosing) return;
   closeUsagePreview();
   const required = shouldRequireAnnouncement(state.announcement);
+  const notice = state.announcement;
+  elements.announcementEyebrow.textContent = notice.inbox ? '公告记录' : notice.id ? '重要公告 · 管理员通知' : '重要公告 · 额度规则';
   elements.announcementTitle.textContent = state.announcement.title;
-  elements.announcementBody.innerHTML = state.announcement.items.map((item, index) => `<article class="announcement-rule"><span class="announcement-rule-number" aria-hidden="true">${String(index + 1).padStart(2, '0')}</span><div><h3>${escapeHtml(item.title)}</h3><p>${escapeHtml(item.text)}</p></div></article>`).join('');
-  elements.announcementHint.textContent = required ? '请阅读以下规则，点击“我已知晓”后继续使用。' : '额度规则随时可查，确认记录已为当前账号保存。';
+  elements.announcementBody.innerHTML = notice.inbox ? announcementListMarkup() : notice.id ? `<p class="notice-message">${escapeHtml(notice.body)}</p>` : notice.items.map((item, index) => `<article class="announcement-rule"><span class="announcement-rule-number" aria-hidden="true">${String(index + 1).padStart(2, '0')}</span><div><h3>${escapeHtml(item.title)}</h3><p>${escapeHtml(item.text)}</p></div></article>`).join('');
+  elements.announcementHint.textContent = required ? '请阅读这条公告，点击“我已知晓”后继续使用。' : notice.inbox ? '发给你的公告会一直保留，点击即可查看。' : notice.id ? `${formatTime(notice.publishedAt)} 发布 · 已知晓` : '额度规则随时可查，确认记录已为当前账号保存。';
+  elements.announcementFootnote.textContent = notice.id || notice.inbox ? '确认只结束提醒，不会删除公告；只有超级管理员可以删除。' : '确认后公告会收纳到顶部，随时可以再次查看。';
   elements.closeAnnouncementButton.classList.toggle('hidden', required);
   elements.announcementError.textContent = '';
   setBusy(elements.acknowledgeAnnouncementButton, false, required ? '我已知晓' : '收起公告');
@@ -124,8 +143,10 @@ async function foldAnnouncement() {
   } else dockAnnouncement();
   if (version !== viewVersion) return;
   resetAnnouncement();
-  elements.announcementDot.classList.add('hidden');
+  updateAnnouncementIndicator();
   elements.openAnnouncementButton.focus({ preventScroll: true });
+  const next = pendingAnnouncement();
+  if (next) { state.announcement = next; openAnnouncement(); }
 }
 
 async function acknowledgeAnnouncement() {
@@ -136,9 +157,11 @@ async function acknowledgeAnnouncement() {
   setBusy(elements.acknowledgeAnnouncementButton, true, '正在保存…');
   elements.announcementError.textContent = '';
   try {
-    const result = await api('/api/announcement/acknowledge', { method: 'POST', body: { version: state.announcement.version } });
+    const noticeId = state.announcement.id;
+    const result = await api(noticeId ? `/api/notices/${encodeURIComponent(noticeId)}/acknowledge` : '/api/announcement/acknowledge', { method: 'POST', body: { version: state.announcement.version } });
     if (version !== viewVersion) return;
-    state.announcement = result.announcement;
+    if (noticeId) { state.notices = result.notices; state.announcement = result.notice || { ...state.announcement, acknowledged: true }; }
+    else { state.policyAnnouncement = result.announcement; state.announcement = result.announcement; }
     await foldAnnouncement();
   } catch (error) {
     if (version === viewVersion) elements.announcementError.textContent = error.message;
@@ -150,7 +173,30 @@ async function acknowledgeAnnouncement() {
   }
 }
 
-elements.openAnnouncementButton.addEventListener('click', openAnnouncement);
+function announcementListMarkup() {
+  const notices = [...state.notices, ...(state.policyAnnouncement ? [state.policyAnnouncement] : [])];
+  return notices.map(notice => `<button class="notice-inbox-item" type="button" data-notice-open="${escapeHtml(notice.id || 'quota-rules')}"><strong>${escapeHtml(notice.title)}</strong><span>${notice.id ? `${escapeHtml(formatTime(notice.publishedAt))} · ${notice.acknowledged ? '已知晓' : '待确认'}` : '额度规则说明'}</span></button>`).join('') || '<p class="access-empty">暂无公告。</p>';
+}
+
+async function openAnnouncementInbox() {
+  const version = viewVersion;
+  await refreshOwnNotices();
+  if (version !== viewVersion || !state.csrfToken || announcementClosing || elements.announcementDialog.open) return;
+  state.announcement = pendingAnnouncement() || { version: 'inbox', title: '公告记录', acknowledged: true, inbox: true };
+  openAnnouncement();
+}
+
+elements.openAnnouncementButton.addEventListener('click', openAnnouncementInbox);
+elements.announcementBody.addEventListener('click', event => {
+  const button = event.target.closest('[data-notice-open]');
+  if (!button || shouldRequireAnnouncement(state.announcement)) return;
+  const notice = button.dataset.noticeOpen === 'quota-rules' ? state.policyAnnouncement : state.notices.find(item => item.id === button.dataset.noticeOpen);
+  if (!notice) return;
+  cancelUiAnimations();
+  resetAnnouncement();
+  state.announcement = notice;
+  openAnnouncement();
+});
 elements.acknowledgeAnnouncementButton.addEventListener('click', acknowledgeAnnouncement);
 elements.closeAnnouncementButton.addEventListener('click', () => { if (!shouldRequireAnnouncement(state.announcement) && !announcementSaving) void foldAnnouncement(); });
 elements.announcementDialog.addEventListener('cancel', event => {
@@ -160,8 +206,122 @@ elements.announcementDialog.addEventListener('cancel', event => {
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden && !elements.app.classList.contains('hidden')) {
     checkBudgetNotification();
+    void refreshOwnNotices();
   }
 });
+
+async function refreshOwnNotices() {
+  if (state.role !== 'admin' || !state.csrfToken || document.hidden || elements.app.classList.contains('hidden') || noticeSyncing || announcementSaving || announcementClosing) return;
+  noticeSyncing = true;
+  const version = viewVersion;
+  try {
+    const result = await api('/api/notices');
+    if (version !== viewVersion || announcementSaving || announcementClosing) return;
+    state.notices = result.notices;
+    updateAnnouncementIndicator();
+    const current = state.announcement?.id && state.notices.find(notice => notice.id === state.announcement.id);
+    const next = pendingAnnouncement();
+    if (elements.announcementDialog.open && state.announcement?.id && !current) {
+      cancelUiAnimations(); resetAnnouncement();
+      state.announcement = next || state.policyAnnouncement;
+      if (next) openAnnouncement();
+    } else if (next && (!elements.announcementDialog.open || !shouldRequireAnnouncement(state.announcement))) {
+      cancelUiAnimations(); resetAnnouncement(); state.announcement = next; openAnnouncement();
+    } else if (elements.announcementDialog.open && state.announcement?.inbox) elements.announcementBody.innerHTML = announcementListMarkup();
+  } catch {}
+  finally { noticeSyncing = false; }
+}
+
+function closeNoticeComposer() {
+  noticeComposerVersion++;
+  noticeComposerAccessId = '';
+  noticeComposerBusy = false;
+  if (elements.noticeComposer.open) elements.noticeComposer.close();
+  document.body.classList.remove('notice-composer-open');
+  elements.noticeComposerForm.reset();
+  elements.noticeComposerError.textContent = '';
+  elements.noticeHistory.innerHTML = '';
+  setBusy(elements.noticePublishButton, false, '发布公告');
+}
+
+function renderNoticeHistory(notices) {
+  elements.noticeHistory.innerHTML = notices.map(notice => `<article class="notice-history-item"><div class="notice-history-heading"><strong>${escapeHtml(notice.title)}</strong><button class="text-button" type="button" data-notice-delete="${escapeHtml(notice.id)}">删除</button></div><p>${escapeHtml(notice.body)}</p><small>${escapeHtml(formatTime(notice.publishedAt))} 发布 · ${notice.acknowledged ? `已知晓 ${escapeHtml(formatTime(notice.acknowledgedAt))}` : '待确认'}</small></article>`).join('') || '<p class="access-empty">还没有发过公告。发布后会保留在这里。</p>';
+}
+
+async function openNoticeComposer(accessKeyId) {
+  if (state.role !== 'superadmin') return;
+  const account = state.accessKeys.find(entry => entry.id === accessKeyId);
+  if (!account) return;
+  closeNoticeComposer();
+  noticeComposerAccessId = accessKeyId;
+  const operation = ++noticeComposerVersion;
+  const version = viewVersion;
+  elements.noticeRecipient.textContent = account.secret;
+  elements.noticeHistory.innerHTML = '<p class="access-empty">正在读取历史公告…</p>';
+  document.body.classList.add('notice-composer-open');
+  elements.noticeComposer.showModal();
+  elements.noticeTitleInput.focus();
+  try {
+    const result = await api(`/api/access-keys/${encodeURIComponent(accessKeyId)}/notices`);
+    if (operation === noticeComposerVersion && version === viewVersion) renderNoticeHistory(result.notices);
+  } catch (error) {
+    if (operation === noticeComposerVersion && version === viewVersion) { elements.noticeHistory.innerHTML = ''; elements.noticeComposerError.textContent = error.message; }
+  }
+}
+
+async function saveTargetedNotice(event) {
+  event.preventDefault();
+  if (noticeComposerBusy || !noticeComposerAccessId || state.role !== 'superadmin') return;
+  const accessKeyId = noticeComposerAccessId;
+  const operation = ++noticeComposerVersion;
+  const version = viewVersion;
+  noticeComposerBusy = true;
+  elements.noticeComposerError.textContent = '';
+  setBusy(elements.noticePublishButton, true, '发布中…');
+  elements.noticeHistory.querySelectorAll('button').forEach(button => { button.disabled = true; });
+  try {
+    const result = await api(`/api/access-keys/${encodeURIComponent(accessKeyId)}/notices`, { method: 'POST', body: { title: elements.noticeTitleInput.value, body: elements.noticeBodyInput.value } });
+    if (operation !== noticeComposerVersion || version !== viewVersion) return;
+    renderNoticeHistory(result.notices);
+    elements.noticeComposerForm.reset();
+    toast('公告已发布，仅发送给这位管理员');
+  } catch (error) {
+    if (operation === noticeComposerVersion && version === viewVersion) elements.noticeComposerError.textContent = error.message;
+  } finally {
+    if (operation === noticeComposerVersion && version === viewVersion) {
+      noticeComposerBusy = false; setBusy(elements.noticePublishButton, false, '发布公告');
+      elements.noticeHistory.querySelectorAll('button').forEach(button => { button.disabled = false; });
+    }
+  }
+}
+
+async function deleteTargetedNotice(noticeId) {
+  if (noticeComposerBusy || !noticeComposerAccessId || state.role !== 'superadmin' || !window.confirm('删除后，这位管理员将无法再查看该公告。确定删除？')) return;
+  const accessKeyId = noticeComposerAccessId;
+  const operation = ++noticeComposerVersion;
+  const version = viewVersion;
+  noticeComposerBusy = true;
+  elements.noticeComposerError.textContent = '';
+  setBusy(elements.noticePublishButton, true, '删除中…');
+  elements.noticeHistory.querySelectorAll('button').forEach(button => { button.disabled = true; });
+  try {
+    const result = await api(`/api/access-keys/${encodeURIComponent(accessKeyId)}/notices/${encodeURIComponent(noticeId)}`, { method: 'DELETE' });
+    if (operation === noticeComposerVersion && version === viewVersion) { renderNoticeHistory(result.notices); toast('公告已删除'); }
+  } catch (error) {
+    if (operation === noticeComposerVersion && version === viewVersion) elements.noticeComposerError.textContent = error.message;
+  } finally {
+    if (operation === noticeComposerVersion && version === viewVersion) {
+      noticeComposerBusy = false; setBusy(elements.noticePublishButton, false, '发布公告');
+      elements.noticeHistory.querySelectorAll('button').forEach(button => { button.disabled = false; });
+    }
+  }
+}
+
+elements.noticeComposerForm.addEventListener('submit', saveTargetedNotice);
+elements.closeNoticeComposerButton.addEventListener('click', closeNoticeComposer);
+elements.noticeComposer.addEventListener('cancel', event => { event.preventDefault(); closeNoticeComposer(); });
+elements.noticeHistory.addEventListener('click', event => { const button = event.target.closest('[data-notice-delete]'); if (button) void deleteTargetedNotice(button.dataset.noticeDelete); });
+setInterval(() => { void refreshOwnNotices(); }, 15000);
 
 function closeReward(){elements.rewardOverlay.classList.add('hidden');elements.rewardForm.reset();elements.rewardError.textContent='';}
 elements.closeRewardButton.addEventListener('click',closeReward);
@@ -281,7 +441,9 @@ async function enterApp(session, fromLogin = false) {
   state.accessKey=session.accessKey;
   state.accessKeys=[];
   state.selectedAccessId=session.accessKey?.id||'';
-  state.announcement = session.announcement || null;
+  state.policyAnnouncement = session.announcement || null;
+  state.notices = session.notices || [];
+  state.announcement = pendingAnnouncement() || state.policyAnnouncement;
   elements.announcementDot.classList.toggle('hidden', !shouldRequireAnnouncement(state.announcement));
   elements.roleLabel.textContent=state.role==='superadmin'?'超级管理员':'密钥管理';
   elements.accessManagement.classList.toggle('hidden',state.role!=='superadmin');
@@ -306,13 +468,15 @@ function showLogin() {
   cancelUiAnimations();
   resetAnnouncement();
   state.announcement = null;
+  state.policyAnnouncement = null;
+  state.notices = [];
   loggingOut = false;
   elements.loginForm.setAttribute('aria-busy', 'false');
   setBusy(elements.loginButton, false, '登录');
   setBusy(elements.logoutButton, false, '退出登录');
   elements.password.disabled = false;
   closeUsagePreview();
-  closeBudget(); closeAdd(); closeQuota(); closeAccess(); closeTransfer(); closeReward();
+  closeBudget(); closeAdd(); closeQuota(); closeAccess(); closeTransfer(); closeReward(); closeNoticeComposer();
   state.loadVersion++;
   state.csrfToken='';state.keys=[];state.budget=null;state.accessKeys=[];state.accessKey=null;state.selectedAccessId='';state.rewards=[];state.sorting=false;elements.rewardList.innerHTML='';
   elements.accessList.innerHTML='';elements.accessTotals.innerHTML='';elements.currentAccess.textContent='';elements.usageSummary.innerHTML='';elements.keyGrid.innerHTML='';
@@ -371,6 +535,12 @@ function renderAccessKeys(){
   elements.accessList.innerHTML=matches.map(entry=>`<article class="access-card${entry.id===state.selectedAccessId?' access-selected':''}"><div class="access-card-heading"><strong>${escapeHtml(entry.secret)}</strong><span>${entry.keyCount} 个 API Key</span></div>${entry.previousSecrets.length?`<p class="access-history">曾用密钥：${entry.previousSecrets.map(escapeHtml).join('、')}</p>`:''}<dl><div><dt>每月额度</dt><dd>${entry.budget.limit===null?'未设置':money(entry.budget.limit)}</dd></div><div><dt>已用 / 剩余</dt><dd>${entry.budget.used===null?'待同步':`${money(entry.budget.used)} / ${entry.budget.balance===null?'未设置':money(entry.budget.balance)}`}</dd></div></dl><p class="access-status">${entry.budget.stale?'用量待同步 · ':''}${entry.budget.status==='blocked'?'月度额度已用尽':entry.budget.limit===null?'尚未设置月度额度':'月度额度已启用'}</p><div class="access-actions"><button class="secondary" data-access-select="${entry.id}" aria-pressed="${entry.id===state.selectedAccessId}">${entry.id===state.selectedAccessId?'正在管理':'查看管理'}</button><button class="secondary" data-access-budget="${entry.id}">设置额度</button><button class="text-button" data-access-edit="${entry.id}">修改密钥</button></div></article>`).join('')||'<p class="access-empty">没有匹配的登录密钥或曾用密钥。</p>';
   elements.accessList.querySelectorAll('[data-access-select]').forEach(button=>button.addEventListener('click',()=>selectAccess(button.dataset.accessSelect)));
   elements.accessList.querySelectorAll('[data-access-edit]').forEach(button=>button.addEventListener('click',()=>openAccess(all.find(entry=>entry.id===button.dataset.accessEdit))));
+  elements.accessList.querySelectorAll('.access-card').forEach((card, index) => {
+    const button = document.createElement('button');
+    button.type = 'button'; button.className = 'secondary'; button.dataset.accessNotice = matches[index].id; button.textContent = '发布公告';
+    button.addEventListener('click', () => { void openNoticeComposer(button.dataset.accessNotice); });
+    card.querySelector('.access-actions').append(button);
+  });
   elements.accessList.querySelectorAll('[data-access-budget]').forEach(button=>button.addEventListener('click',async()=>{
     await selectAccess(button.dataset.accessBudget);
     if(state.selectedAccessId===button.dataset.accessBudget&&!elements.app.classList.contains('hidden'))document.getElementById('editBudget')?.click();
