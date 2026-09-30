@@ -185,6 +185,110 @@ test('Escape never dismisses a required announcement but can fold a reviewed one
   assert.equal(folded, 1);
 });
 
+function animatedFoldContext() {
+  let finishLayout;
+  let finishReveal;
+  const layoutFinished = new Promise(resolve => { finishLayout = resolve; });
+  const revealFinished = new Promise(resolve => { finishReveal = resolve; });
+  const classList = () => ({ add() {}, remove() {} });
+  const style = () => ({ removeProperty(property) { delete this[property]; } });
+  const context = vm.createContext({
+    state: { announcement: { version: 'current', acknowledged: true } },
+    viewVersion: 1,
+    announcementClosing: false,
+    announcementSaving: false,
+    announcementLayout: null,
+    announcementFlight: null,
+    focused: 0,
+    animations: [],
+    elements: {
+      announcementDialog: { open: true, close() { this.open = false; } },
+      announcementSurface: { classList: classList(), getBoundingClientRect: () => ({}) },
+      announcementSlot: { append() {}, getBoundingClientRect: () => ({}) },
+      announcementShade: { classList: classList(), style: style() },
+      announcementDot: { classList: classList() },
+      announcementError: { textContent: '' },
+      topbar: { classList: classList() },
+      openAnnouncementButton: { style: style(), setAttribute() {}, focus: () => { context.focused++; } }
+    },
+    document: {
+      body: { append() {}, classList: classList() },
+      createElement: () => ({ style: style(), append() {}, remove() {} })
+    },
+    canAnimateUi: () => true,
+    cancelUiAnimations() {},
+    animateUi: (target, parameters, options) => {
+      context.animations.push({ target, parameters, options });
+      return target === context.elements.openAnnouncementButton ? revealFinished : Promise.resolve();
+    },
+    anime: {
+      createLayout: () => {
+        context.opacityAtLayoutStart = context.elements.openAnnouncementButton.style.opacity;
+        return { revert() {}, update: callback => { callback(); return { then: () => layoutFinished }; } };
+      }
+    }
+  });
+  vm.runInContext(source.slice(source.indexOf('function shouldRequireAnnouncement('), source.indexOf('function canAnimateUi(')) + source.slice(source.indexOf('function dockAnnouncement('), source.indexOf('async function acknowledgeAnnouncement(')), context);
+  return { context, finishLayout, finishReveal };
+}
+
+test('the docked announcement icon stays hidden during folding and then fades and scales in', async () => {
+  const styles = await fs.readFile(new URL('../public/overrides.css', import.meta.url), 'utf8');
+  assert.match(styles, /\.announcement-flight\s+\.announcement-nav-button\s*\{[^}]*transition:\s*none\s*;/);
+  const { context, finishLayout, finishReveal } = animatedFoldContext();
+  const pending = context.foldAnnouncement();
+  assert.equal(context.opacityAtLayoutStart, '0');
+  assert.equal(context.animations.length, 1);
+  finishLayout();
+  await new Promise(setImmediate);
+  const reveal = context.animations[1];
+  assert.equal(reveal.target, context.elements.openAnnouncementButton);
+  assert.deepEqual(Array.from(reveal.parameters.opacity), [0, 1]);
+  assert.deepEqual(Array.from(reveal.parameters.scale), [.88, 1]);
+  assert.equal(reveal.parameters.duration, 180);
+  assert.equal(reveal.parameters.ease, 'inOut(2)');
+  assert.equal(reveal.options.restoreOnComplete, false);
+  assert.equal(context.announcementClosing, true);
+  assert.equal(context.focused, 0);
+  await context.foldAnnouncement();
+  assert.equal(context.animations.length, 2);
+  context.elements.openAnnouncementButton.style.opacity = '1';
+  context.elements.openAnnouncementButton.style.transform = 'scale(1)';
+  finishReveal();
+  await pending;
+  assert.equal(context.elements.openAnnouncementButton.style.opacity, undefined);
+  assert.equal(context.elements.openAnnouncementButton.style.transform, undefined);
+  assert.equal(context.announcementClosing, false);
+  assert.equal(context.focused, 1);
+});
+
+test('an interrupted fold cannot reveal the announcement icon in a newer session', async () => {
+  const { context, finishLayout } = animatedFoldContext();
+  const pending = context.foldAnnouncement();
+  context.viewVersion++;
+  context.resetAnnouncement();
+  finishLayout();
+  await pending;
+  assert.equal(context.animations.length, 1);
+  assert.equal(context.elements.openAnnouncementButton.style.opacity, undefined);
+  assert.equal(context.focused, 0);
+});
+
+test('resetting during the icon reveal removes temporary styles and never restores old focus', async () => {
+  const { context, finishLayout, finishReveal } = animatedFoldContext();
+  const pending = context.foldAnnouncement();
+  finishLayout();
+  await new Promise(setImmediate);
+  context.elements.openAnnouncementButton.style.transform = 'scale(.94)';
+  context.viewVersion++;
+  context.resetAnnouncement();
+  finishReveal();
+  await pending;
+  assert.equal(context.elements.openAnnouncementButton.style.opacity, undefined);
+  assert.equal(context.elements.openAnnouncementButton.style.transform, undefined);
+  assert.equal(context.focused, 0);
+});
+
 test('folding cannot bypass acknowledgement and reduced motion docks without a temporary layer', async () => {
   let closed = 0;
   let docked = 0;

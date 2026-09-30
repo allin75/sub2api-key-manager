@@ -56,6 +56,8 @@ Anime.js 4.5.0 的未修改浏览器发行文件和 MIT 许可证位于 `public/
 
 页面根元素持续保留滚动条占位，公告打开时仍锁定背景滚动，关闭时恢复滚动；开关及收缩过程不改变页面宽度，避免左右晃动。手机使用覆盖式滚动条时不会额外占位。
 
+公告卡片收缩到顶部后，入口图标和文字以 180 毫秒淡入并轻微放大，不再突然切换显示。动画层内关闭按钮的通用 CSS 过渡，避免与动画库叠加；减少动画模式和动画库不可用时直接展示入口，退出时清理临时样式。
+
 收起时遮罩淡出结束后保持透明，直到布局过渡全部完成再隐藏并清理样式，避免末段重置遮罩导致闪屏；取消动画时仍恢复原始样式。
 
 本地假数据界面截图：[桌面公告](docs/screenshots/2026-09-30-announcement-desktop.png)、[桌面导航](docs/screenshots/2026-09-30-announcement-navigation.png)、[手机公告](docs/screenshots/2026-09-30-announcement-mobile.png)、[手机导航](docs/screenshots/2026-09-30-announcement-mobile-navigation.png)。

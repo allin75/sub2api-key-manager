@@ -55,6 +55,8 @@ function resetAnnouncement() {
   announcementLayout = null;
   if (elements.announcementDialog.open) elements.announcementDialog.close();
   dockAnnouncement();
+  elements.openAnnouncementButton.style.removeProperty('opacity');
+  elements.openAnnouncementButton.style.removeProperty('transform');
   announcementFlight?.remove();
   announcementFlight = null;
   announcementClosing = false;
@@ -109,12 +111,15 @@ async function foldAnnouncement() {
       document.body.append(announcementFlight);
       source.append(elements.announcementSurface);
       elements.topbar.classList.add('announcement-folding');
+      elements.openAnnouncementButton.style.opacity = '0';
       announcementLayout = globalThis.anime.createLayout(announcementFlight, { children: '#announcementSurface', duration: 480, ease: 'inOut(3)', swapAt: { opacity: 1 } });
       const transition = announcementLayout.update(() => {
         elements.announcementSurface.classList.add('is-docked');
         destination.append(elements.announcementSurface);
       });
       await Promise.all([transition.then(), animateUi(elements.announcementShade, { opacity: [1, 0], duration: 440, ease: 'inOut(3)' }, { restoreOnComplete: false })]);
+      if (version !== viewVersion) return;
+      await animateUi(elements.openAnnouncementButton, { opacity: [0, 1], scale: [.88, 1], duration: 180, ease: 'inOut(2)' }, { restoreOnComplete: false });
     } catch { dockAnnouncement(); }
   } else dockAnnouncement();
   if (version !== viewVersion) return;

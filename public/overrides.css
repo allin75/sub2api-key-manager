@@ -44,6 +44,7 @@ html { scrollbar-gutter:stable; }
 .announcement-shade { position:fixed; inset:0; z-index:80; background:#030914a8; backdrop-filter:blur(7px); }
 .announcement-open { overflow:hidden; }
 .announcement-flight { position:fixed; inset:0; z-index:100; pointer-events:none; }
+.announcement-flight .announcement-nav-button { transition:none; }
 .announcement-flight-anchor { position:absolute; }
 .topbar.announcement-folding { z-index:90; }
 @media(max-width:680px) {
