@@ -1,61 +1,159 @@
-const state = { csrfToken: '', keys: [], schedule: null, budget:null, role:'admin', accessKey:null, accessKeys:[], selectedAccessId:'', loadVersion:0, rewards:[], keyOrderVersion:0, accessOrderVersion:0, sorting:false, policySaving:false };
+const state = { csrfToken: '', keys: [], schedule: null, budget:null, role:'admin', accessKey:null, accessKeys:[], selectedAccessId:'', loadVersion:0, rewards:[], keyOrderVersion:0, accessOrderVersion:0, sorting:false, policySaving:false, announcement:null };
 const budgetNotified = new Set();
-const quotaRulesNoticeStorage = 'sub2api-quota-rules-notice-v1';
-const quotaRulesNoticeLifetime = 3 * 86400000;
-let quotaRulesNoticeState = { seenAt: null, dismissed: false };
-try {
-  const saved = JSON.parse(localStorage.getItem(quotaRulesNoticeStorage));
-  if (saved && typeof saved === 'object') quotaRulesNoticeState = { seenAt: Number.isFinite(saved.seenAt) ? saved.seenAt : null, dismissed: saved.dismissed === true };
-} catch {}
-const elements = Object.fromEntries(['loginScreen','loginForm','loginError','password','app','logoutButton','refreshButton','resetCountdown','openAddButton','quotaRulesNotice','usageSummary','keyGrid','addOverlay','addForm','customKey','addError','closeAddButton','cancelAddButton','quotaOverlay','quotaForm','quotaInput','quotaError','quotaDescription','closeQuotaButton','cancelQuotaButton','toast'].map(id => [id, document.getElementById(id)]));
+const elements = Object.fromEntries(['loginScreen','loginForm','loginError','password','app','logoutButton','refreshButton','resetCountdown','openAddButton','usageSummary','keyGrid','addOverlay','addForm','customKey','addError','closeAddButton','cancelAddButton','quotaOverlay','quotaForm','quotaInput','quotaError','quotaDescription','closeQuotaButton','cancelQuotaButton','toast'].map(id => [id, document.getElementById(id)]));
 
 for(const id of ['roleLabel','budgetStatus','syncStatus','budgetOverlay','budgetForm','budgetInput','budgetError','closeBudgetButton','cancelBudgetButton','saveBudgetButton']) elements[id]=document.getElementById(id);
 for(const id of ['accessManagement','accessTotals','accessSearch','accessList','currentAccess','changeSecretButton','newAccessButton','accessOverlay','accessForm','accessTitle','accessDescription','accessSecret','accessLimitField','accessLimit','accessError','closeAccessButton','cancelAccessButton','saveAccessButton','addDescription']) elements[id]=document.getElementById(id);
 for(const id of ['transferOverlay','transferForm','transferDescription','transferTarget','transferError','closeTransferButton','cancelTransferButton','saveTransferButton']) elements[id]=document.getElementById(id);
 let transferKeyId='';
 for(const id of ['budgetType','accessType','rewardList','openRewardButton','rewardOverlay','rewardForm','rewardAmount','rewardExpiry','rewardError','closeRewardButton','cancelRewardButton','saveRewardButton'])elements[id]=document.getElementById(id);
-let quotaRulesNoticeTimer = null;
-let quotaRulesNoticeObserver = null;
+for (const id of ['sessionLoading','loginButton','topbar','announcementSlot','announcementSurface','openAnnouncementButton','announcementDot','announcementDialog','announcementShade','announcementTitle','announcementHint','announcementBody','announcementError','closeAnnouncementButton','acknowledgeAnnouncementButton','announcementLogoutButton']) elements[id] = document.getElementById(id);
+const activeUiAnimations = new Set();
+let viewVersion = 0;
+let loginAttempt = 0;
+let announcementLayout = null;
+let announcementFlight = null;
+let announcementClosing = false;
+let announcementSaving = false;
+let loggingOut = false;
 
-function shouldShowQuotaRulesNotice(notice, now) {
-  return !notice.dismissed && (!Number.isFinite(notice.seenAt) || now - notice.seenAt < quotaRulesNoticeLifetime);
+function shouldRequireAnnouncement(notice) {
+  return !!notice?.version && notice.acknowledged !== true;
 }
 
-function persistQuotaRulesNotice() {
-  try { localStorage.setItem(quotaRulesNoticeStorage, JSON.stringify(quotaRulesNoticeState)); } catch {}
+function canAnimateUi() {
+  return !!globalThis.anime && !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 }
 
-function markQuotaRulesNoticeSeen() {
-  if (quotaRulesNoticeState.dismissed || quotaRulesNoticeState.seenAt !== null) return;
-  quotaRulesNoticeState.seenAt = Date.now();
-  persistQuotaRulesNotice();
-  quotaRulesNoticeObserver?.disconnect();
-  renderQuotaRulesNotice();
+function animateUi(target, parameters) {
+  if (!canAnimateUi()) return Promise.resolve();
+  return new Promise(resolve => {
+    let animation;
+    const finish = () => {
+      animation?.revert();
+      activeUiAnimations.delete(finish);
+      resolve();
+    };
+    activeUiAnimations.add(finish);
+    try { animation = globalThis.anime.animate(target, { ...parameters, onComplete: finish }); }
+    catch { finish(); }
+  });
 }
 
-function renderQuotaRulesNotice() {
-  clearTimeout(quotaRulesNoticeTimer);
-  const visible = shouldShowQuotaRulesNotice(quotaRulesNoticeState, Date.now());
-  elements.quotaRulesNotice.classList.toggle('hidden', !visible);
-  if (!visible) { quotaRulesNoticeObserver?.disconnect(); return; }
-  if (quotaRulesNoticeState.seenAt !== null) {
-    quotaRulesNoticeTimer = setTimeout(renderQuotaRulesNotice, Math.max(0, quotaRulesNoticeState.seenAt + quotaRulesNoticeLifetime - Date.now()));
-  } else if ('IntersectionObserver' in window) {
-    quotaRulesNoticeObserver ??= new IntersectionObserver(entries => {
-      if (!document.hidden && entries.some(entry => entry.intersectionRatio >= 0.5)) markQuotaRulesNoticeSeen();
-    }, { threshold: 0.5 });
-    quotaRulesNoticeObserver.observe(elements.quotaRulesNotice);
-  } else markQuotaRulesNoticeSeen();
+function cancelUiAnimations() {
+  for (const finish of [...activeUiAnimations]) finish();
 }
 
-elements.quotaRulesNotice.addEventListener('click', () => {
-  quotaRulesNoticeState.dismissed = true;
-  persistQuotaRulesNotice();
-  renderQuotaRulesNotice();
+function dockAnnouncement() {
+  elements.announcementSurface.classList.add('is-docked');
+  elements.announcementSlot.append(elements.announcementSurface);
+  elements.openAnnouncementButton.setAttribute('aria-expanded', 'false');
+}
+
+function resetAnnouncement() {
+  announcementLayout?.revert();
+  announcementLayout = null;
+  if (elements.announcementDialog.open) elements.announcementDialog.close();
+  dockAnnouncement();
+  announcementFlight?.remove();
+  announcementFlight = null;
+  announcementClosing = false;
+  announcementSaving = false;
+  elements.topbar.classList.remove('announcement-folding');
+  elements.announcementShade.classList.add('hidden');
+  document.body.classList.remove('announcement-open');
+  elements.announcementError.textContent = '';
+}
+
+function openAnnouncement() {
+  if (!state.announcement || elements.announcementDialog.open || announcementClosing) return;
+  closeUsagePreview();
+  const required = shouldRequireAnnouncement(state.announcement);
+  elements.announcementTitle.textContent = state.announcement.title;
+  elements.announcementBody.innerHTML = state.announcement.items.map((item, index) => `<article class="announcement-rule"><span class="announcement-rule-number" aria-hidden="true">${String(index + 1).padStart(2, '0')}</span><div><h3>${escapeHtml(item.title)}</h3><p>${escapeHtml(item.text)}</p></div></article>`).join('');
+  elements.announcementHint.textContent = required ? '请阅读以下规则，点击“我已知晓”后继续使用。' : '额度规则随时可查，确认记录已为当前账号保存。';
+  elements.closeAnnouncementButton.classList.toggle('hidden', required);
+  elements.announcementError.textContent = '';
+  setBusy(elements.acknowledgeAnnouncementButton, false, required ? '我已知晓' : '收起公告');
+  elements.announcementSurface.classList.remove('is-docked');
+  elements.announcementDialog.append(elements.announcementSurface);
+  elements.openAnnouncementButton.setAttribute('aria-expanded', 'true');
+  document.body.classList.add('announcement-open');
+  elements.announcementShade.classList.remove('hidden');
+  elements.announcementDialog.showModal();
+  elements.acknowledgeAnnouncementButton.focus({ preventScroll: true });
+  void animateUi(elements.announcementShade, { opacity: [0, 1], duration: 240, ease: 'out(3)' });
+  void animateUi(elements.announcementSurface, { opacity: [0, 1], y: [18, 0], scale: [.97, 1], duration: 320, ease: 'out(3)' });
+}
+
+async function foldAnnouncement() {
+  if (shouldRequireAnnouncement(state.announcement) || announcementClosing || !elements.announcementDialog.open) return;
+  announcementClosing = true;
+  const version = viewVersion;
+  cancelUiAnimations();
+  const bounds = elements.announcementSurface.getBoundingClientRect();
+  elements.announcementDialog.close();
+  if (canAnimateUi()) {
+    try {
+      announcementFlight = document.createElement('div');
+      announcementFlight.className = 'announcement-flight';
+      const source = document.createElement('div');
+      const destination = document.createElement('div');
+      source.className = destination.className = 'announcement-flight-anchor';
+      const target = elements.announcementSlot.getBoundingClientRect();
+      for (const [anchor, rectangle] of [[source, bounds], [destination, target]]) {
+        Object.assign(anchor.style, { left: `${rectangle.left}px`, top: `${rectangle.top}px`, width: `${rectangle.width}px`, height: `${rectangle.height}px` });
+      }
+      announcementFlight.append(source, destination);
+      document.body.append(announcementFlight);
+      source.append(elements.announcementSurface);
+      elements.topbar.classList.add('announcement-folding');
+      announcementLayout = globalThis.anime.createLayout(announcementFlight, { children: '#announcementSurface', duration: 480, ease: 'inOut(3)', swapAt: { opacity: 1 } });
+      const transition = announcementLayout.update(() => {
+        elements.announcementSurface.classList.add('is-docked');
+        destination.append(elements.announcementSurface);
+      });
+      await Promise.all([transition.then(), animateUi(elements.announcementShade, { opacity: [1, 0], duration: 440, ease: 'inOut(3)' })]);
+    } catch { dockAnnouncement(); }
+  } else dockAnnouncement();
+  if (version !== viewVersion) return;
+  resetAnnouncement();
+  elements.announcementDot.classList.add('hidden');
+  elements.openAnnouncementButton.focus({ preventScroll: true });
+}
+
+async function acknowledgeAnnouncement() {
+  if (announcementSaving || announcementClosing) return;
+  if (!shouldRequireAnnouncement(state.announcement)) { await foldAnnouncement(); return; }
+  announcementSaving = true;
+  const version = viewVersion;
+  setBusy(elements.acknowledgeAnnouncementButton, true, '正在保存…');
+  elements.announcementError.textContent = '';
+  try {
+    const result = await api('/api/announcement/acknowledge', { method: 'POST', body: { version: state.announcement.version } });
+    if (version !== viewVersion) return;
+    state.announcement = result.announcement;
+    await foldAnnouncement();
+  } catch (error) {
+    if (version === viewVersion) elements.announcementError.textContent = error.message;
+  } finally {
+    if (version === viewVersion) {
+      announcementSaving = false;
+      setBusy(elements.acknowledgeAnnouncementButton, false, shouldRequireAnnouncement(state.announcement) ? '我已知晓' : '收起公告');
+    }
+  }
+}
+
+elements.openAnnouncementButton.addEventListener('click', openAnnouncement);
+elements.acknowledgeAnnouncementButton.addEventListener('click', acknowledgeAnnouncement);
+elements.closeAnnouncementButton.addEventListener('click', () => { if (!shouldRequireAnnouncement(state.announcement) && !announcementSaving) void foldAnnouncement(); });
+elements.announcementDialog.addEventListener('cancel', event => {
+  event.preventDefault();
+  if (!shouldRequireAnnouncement(state.announcement) && !announcementSaving) void foldAnnouncement();
 });
+elements.announcementLogoutButton.addEventListener('click', logout);
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden && !elements.app.classList.contains('hidden')) {
-    renderQuotaRulesNotice();
     checkBudgetNotification();
   }
 });
@@ -107,26 +205,51 @@ elements.budgetOverlay.addEventListener('click',event=>{if(event.target===elemen
 elements.budgetForm.addEventListener('submit',saveBudget);
 
 async function boot() {
+  const version = viewVersion;
   try {
     const session = await api('/api/session');
-    enterApp(session);
-  } catch { showLogin(); }
+    if (version === viewVersion) await enterApp(session);
+  } catch { if (version === viewVersion) showLogin(); }
 }
 
 elements.loginForm.addEventListener('submit', async event => {
   event.preventDefault();
+  if (elements.loginButton.disabled) return;
+  const version = viewVersion;
+  const attempt = ++loginAttempt;
   requestBudgetNotificationPermission();
   elements.loginError.textContent = '';
+  elements.loginForm.setAttribute('aria-busy', 'true');
+  setBusy(elements.loginButton, true, '正在登录…');
+  elements.password.disabled = true;
   try {
     const session = await api('/api/login', { method:'POST', body:{ password:elements.password.value } });
+    if (version !== viewVersion) return;
     elements.password.value = '';
-    enterApp(session);
-  } catch (error) { elements.loginError.textContent = error.message; }
+    await enterApp(session, true);
+  } catch (error) {
+    if (version === viewVersion) elements.loginError.textContent = error.message;
+  } finally {
+    if (attempt === loginAttempt) {
+      elements.loginForm.setAttribute('aria-busy', 'false');
+      setBusy(elements.loginButton, false, '登录');
+      elements.password.disabled = false;
+      if (!elements.loginScreen.classList.contains('hidden')) elements.password.focus();
+    }
+  }
 });
 
-elements.logoutButton.addEventListener('click', async () => {
-  try { await api('/api/logout', { method:'POST' }); } finally { state.csrfToken=''; showLogin(); }
-});
+elements.logoutButton.addEventListener('click', logout);
+
+async function logout() {
+  if (loggingOut) return;
+  loggingOut = true;
+  setBusy(elements.logoutButton, true, '退出中…');
+  setBusy(elements.announcementLogoutButton, true, '退出中…');
+  try { await api('/api/logout', { method: 'POST' }); }
+  catch {}
+  finally { showLogin(); }
+}
 elements.refreshButton.addEventListener('click', () => { requestBudgetNotificationPermission(); loadKeys(true); });
 elements.openAddButton.addEventListener('click', () => { elements.addDescription.textContent=`关联到登录密钥“${currentAccess()?.secret||''}”；完整 API Key 仅用于验证。`; elements.addOverlay.classList.remove('hidden'); elements.customKey.focus(); });
 elements.closeAddButton.addEventListener('click', closeAdd);
@@ -145,12 +268,17 @@ elements.cancelQuotaButton.addEventListener('click', closeQuota);
 elements.quotaOverlay.addEventListener('click', event => { if(event.target===elements.quotaOverlay) closeQuota(); });
 elements.quotaForm.addEventListener('submit', updateQuota);
 
-function enterApp(session) {
+async function enterApp(session, fromLogin = false) {
+  const version = ++viewVersion;
+  cancelUiAnimations();
+  resetAnnouncement();
   state.csrfToken=session.csrfToken;
   state.role=session.role;
   state.accessKey=session.accessKey;
   state.accessKeys=[];
   state.selectedAccessId=session.accessKey?.id||'';
+  state.announcement = session.announcement || null;
+  elements.announcementDot.classList.toggle('hidden', !shouldRequireAnnouncement(state.announcement));
   elements.roleLabel.textContent=state.role==='superadmin'?'超级管理员':'密钥管理';
   elements.accessManagement.classList.toggle('hidden',state.role!=='superadmin');
   elements.changeSecretButton.classList.toggle('hidden',state.role==='superadmin');
@@ -158,20 +286,37 @@ function enterApp(session) {
   elements.openAddButton.classList.toggle('hidden',state.role!=='superadmin');
   elements.openRewardButton.classList.toggle('hidden',state.role!=='superadmin');
   elements.rewardList.closest('.reward-panel').classList.add('hidden');
+  if (fromLogin) await animateUi(elements.loginForm, { opacity: [1, 0], y: [0, -12], scale: [1, .98], duration: 180, ease: 'in(2)' });
+  if (version !== viewVersion) return;
+  elements.sessionLoading.classList.add('hidden');
   elements.loginScreen.classList.add('hidden');
   elements.app.classList.remove('hidden');
-  renderQuotaRulesNotice();
   loadKeys();
+  await animateUi(elements.app, { opacity: [0, 1], y: [12, 0], duration: 260, ease: 'out(3)' });
+  if (version === viewVersion && shouldRequireAnnouncement(state.announcement)) openAnnouncement();
 }
 
 function showLogin() {
+  viewVersion++;
+  loginAttempt++;
+  cancelUiAnimations();
+  resetAnnouncement();
+  state.announcement = null;
+  loggingOut = false;
+  elements.loginForm.setAttribute('aria-busy', 'false');
+  setBusy(elements.loginButton, false, '登录');
+  setBusy(elements.logoutButton, false, '退出登录');
+  setBusy(elements.announcementLogoutButton, false, '退出登录');
+  elements.password.disabled = false;
   closeUsagePreview();
   closeBudget(); closeAdd(); closeQuota(); closeAccess(); closeTransfer(); closeReward();
   state.loadVersion++;
   state.csrfToken='';state.keys=[];state.budget=null;state.accessKeys=[];state.accessKey=null;state.selectedAccessId='';state.rewards=[];state.sorting=false;elements.rewardList.innerHTML='';
   elements.accessList.innerHTML='';elements.accessTotals.innerHTML='';elements.currentAccess.textContent='';elements.usageSummary.innerHTML='';elements.keyGrid.innerHTML='';
   elements.app.classList.add('hidden');
+  elements.sessionLoading.classList.add('hidden');
   elements.loginScreen.classList.remove('hidden');
+  void animateUi(elements.loginForm, { opacity: [0, 1], y: [16, 0], duration: 320, ease: 'out(3)' });
   elements.password.focus();
 }
 

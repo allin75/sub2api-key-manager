@@ -136,6 +136,15 @@ async function persist() {
 }
 
 function validateState(value) {
+  if (value.announcementAcknowledgements !== undefined) {
+    const acknowledgements = value.announcementAcknowledgements;
+    if (!acknowledgements || typeof acknowledgements !== 'object' || Array.isArray(acknowledgements)) throw new Error('公告确认记录无效');
+    const invalid = Object.values(acknowledgements).some(entry =>
+      !entry || typeof entry.version !== 'string' || !entry.version.length || entry.version.length > 128 ||
+      typeof entry.acknowledgedAt !== 'string' || !Number.isFinite(Date.parse(entry.acknowledgedAt))
+    );
+    if (invalid) throw new Error('公告确认记录无效');
+  }
   if (value.accessKeys !== undefined) {
     if (!Array.isArray(value.accessKeys) || !value.accessKeys.length) throw new Error('登录密钥配置无效');
     if(value.defaultAccessId!==undefined&&!value.accessKeys.some(entry=>entry.id===value.defaultAccessId))throw new Error('默认登录范围无效');

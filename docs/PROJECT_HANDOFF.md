@@ -1,6 +1,6 @@
 # 项目交接记录
 
-最后核对：2026-09-29。给另一台电脑和接手的 AI 快速了解当前状态；具体代码变更以 Git 历史为准，发布内容见 `CHANGELOG.md`。
+最后核对：2026-09-30。给另一台电脑和接手的 AI 快速了解当前状态；具体代码变更以 Git 历史为准，发布内容见 `CHANGELOG.md`。
 
 ## 当前状态
 
@@ -8,12 +8,13 @@
 | --- | --- |
 | 源码 | 私有仓库 `allin75/sub2api-key-manager`，以 `origin/main` 为同步源。两台电脑应各自克隆或拉取，不复制工作目录。 |
 | 最近功能版本 | `v1.1.0`，提交 `7f13ec7`。包含七天用量预览、10% 月度余额自动提醒、可关闭且三天过期的额度规则公告。 |
-| NAS | 2026-09-29 已通过 SSH 部署 `7f13ec7`；`/home/Sun/sub2api-key-manager/.release-commit` 为部署版本标记，容器 `sub2api-key-manager` 当时为 `healthy`。 |
+| 当前开发 | `main` 新增强提醒公告、服务端确认记录、顶部导航和登录过渡，记在 `CHANGELOG.md` 的 `Unreleased`；未发布新版本，尚未部署 NAS。 |
+| NAS | 2026-09-30 通过域名 SSH 实际核对：部署标记仍为 `7f13ec7`，容器 `sub2api-key-manager` 为 `healthy`。`/home/Sun/sub2api-key-manager/.release-commit` 为部署版本标记。 |
 | 回退资料 | 部署前备份在 `/home/Sun/sub2api-key-manager-backups/20260929-120453`；上传归档与部署日志在 `/home/Sun/sub2api-key-manager-releases/7f13ec7`。 |
-| 验证 | `node --test` 55 项通过；桌面与手机宽度已检查。 |
-| 待办 | 当前没有已确认但未完成的开发任务。收到新需求后先检查 Git 和 NAS 实际状态，再更新本表。 |
+| 验证 | `node --test` 64 项通过，逐文件语法检查通过。使用本地假数据核验桌面 1440×1000、手机 390×844、320/375/768 宽度及短屏滚动；确认失败重试、跨浏览器记忆、减少动画、脚本加载失败与动画中退出均通过。截图在 `docs/screenshots/`。 |
+| 下一步 | 开发已完成。如需上线，先备份 NAS 的 `.env` 和数据卷，再按实际 `main` 提交部署，核验健康、公告与登录交互；不得仅凭 GitHub 推送更新部署记录。 |
 
-这份文档是时间点记录。文档提交推送后，`main` 的提交会比 NAS 部署标记更新，但这次文档修改不需要重建容器。
+这份文档是时间点记录。本次功能需要实际更新 NAS 容器才能上线；GitHub 同步不代表部署完成，NAS 目前仍运行旧版公告交互。
 
 ## 已完成记录
 
@@ -21,6 +22,7 @@
 - 2026-09-28：加入最近七天用量预览，提交 `db12e63`。
 - 2026-09-29：修复预览定位、连接和快速切换动画；加入手机端每日金额、月度余额 10% 自动提醒、可关闭的额度规则公告。发布 `v1.1.0`，并部署到 NAS。详见 `CHANGELOG.md`。
 - 2026-09-29：建立本交接记录与跨电脑接手流程。此项仅改文档，不改变 NAS 运行代码。
+- 2026-09-30：实现强提醒公告、账号与版本确认记录、顶部常驻入口和公告收缩动画；整理登录动画、重复提交保护和会话中断清理。采用本地托管的 Anime.js 4.5.0（MIT），通过 64 项测试和桌面/手机交互检查。源码与交接记录一同同步，NAS 未部署。
 
 ## 两台电脑接手流程
 
@@ -34,4 +36,4 @@
 - 只通过 SSH 更新 NAS：优先尝试 `Sun@192.168.6.20:22`，本地不可达时尝试 `Sun@fn1501.1501129.xyz:22`。2026-09-29 本机局域网地址直接断开；域名 SSH 可用，强制 IPv6 解析未成功。另一台电脑需自行配置 SSH 密钥和可信主机记录，私钥不进仓库。
 - NAS 项目目录为 `/home/Sun/sub2api-key-manager`，Compose 文件为 `compose.yaml`，数据卷为 `sub2api-key-manager_key-manager-data`。发布归档和备份分别在同级的 `sub2api-key-manager-releases`、`sub2api-key-manager-backups` 目录。
 - 更新前确认 `.env` 和数据卷存在并备份；更新后核对 `.release-commit`、`docker compose ps`、健康状态和页面响应。不要运行 `docker compose down -v`。仓库里的通用 Android `release` 技能不适用于本项目的 NAS 部署。
-- `.env`、`/data`、NAS 备份及 SSH 私钥不随 GitHub 同步。业务状态保存在 NAS Docker 数据卷中；额度规则公告的浏览器查看状态和低余额提醒去重使用各浏览器的 `localStorage`，因此两台电脑的这两项显示状态可能不同。
+- `.env`、`/data`、NAS 备份及 SSH 私钥不随 GitHub 同步。业务状态保存在 NAS Docker 数据卷中；新公告确认保存在服务端 `announcementAcknowledgements`，按账号身份和公告版本隔离，换浏览器不重复提醒。低余额提醒去重仍使用各浏览器的 `localStorage`。NAS 旧版本的公告查看状态仍是浏览器本地记录，部署后不会继承为新公告确认。

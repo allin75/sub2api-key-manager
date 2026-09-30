@@ -4,6 +4,38 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
+test('announcement records validate, survive restart and stay intact during scoped budget writes', async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sub2api-announcement-store-'));
+  const previousDirectory = process.env.DATA_DIR;
+  process.env.DATA_DIR = directory;
+  try {
+    const store = await import(`../src/store.js?announcement=${Date.now()}`);
+    await store.loadStore();
+    await store.initializeAccessKeys('store-test');
+    const snapshot = store.getState();
+    const identity = `access:${snapshot.accessKeys[0].id}`;
+    const record = { version: 'current', acknowledgedAt: '2026-09-30T00:00:00.000Z' };
+    for (const invalid of [null, [], { [identity]: null }, { [identity]: { ...record, version: '' } }, { [identity]: { ...record, acknowledgedAt: 'invalid' } }]) {
+      await assert.rejects(store.saveState({ ...snapshot, announcementAcknowledgements: invalid }), /公告确认记录无效/);
+    }
+    snapshot.announcementAcknowledgements = { [identity]: record };
+    await store.saveState(snapshot);
+    const scoped = store.scopedStore(snapshot.accessKeys[0].id);
+    const budgetState = scoped.getState();
+    budgetState.budget.limit = 25;
+    await scoped.saveState(budgetState);
+    const reloaded = await import(`../src/store.js?announcementReload=${Date.now()}`);
+    await reloaded.loadStore();
+    assert.deepEqual(reloaded.getState().announcementAcknowledgements, { [identity]: record });
+    assert.equal(reloaded.getState().accessKeys[0].state.budget.limit, 25);
+  } finally {
+    if (previousDirectory === undefined) delete process.env.DATA_DIR;
+    else process.env.DATA_DIR = previousDirectory;
+    assert.ok(path.resolve(directory).startsWith(path.resolve(os.tmpdir()) + path.sep));
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+
 test('store persists only a hash and masked key', async () => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sub2api-manager-test-'));
   process.env.DATA_DIR = directory;

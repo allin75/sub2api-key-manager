@@ -5,26 +5,45 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Sub2API Key 用量管理</title>
   <link rel="stylesheet" href="/styles.css">
-  <link rel="stylesheet" href="/overrides.css?v=20260929-10">
-  <script src="/app.js?v=20260929-10" defer></script>
+  <link rel="stylesheet" href="/overrides.css?v=20260930-1">
+  <script src="/vendor/anime.umd.min.js?v=4.5.0" defer></script>
+  <script src="/app.js?v=20260930-1" defer></script>
 </head>
 <body>
-  <div class="login-screen" id="loginScreen">
+  <div class="session-loading" id="sessionLoading" role="status"><div class="brand-mark">S2</div><span>正在加载…</span></div>
+  <div class="login-screen hidden" id="loginScreen">
     <form class="login-card" id="loginForm">
       <div class="brand-mark">S2</div>
       <h1>Key 用量管理</h1>
       <p>输入登录密钥，查看对应的 Key 和额度</p>
       <label for="password">登录密钥</label>
       <input id="password" type="password" required autocomplete="current-password" placeholder="请输入密码">
-      <button class="primary wide" type="submit">登录</button>
-      <div class="form-error" id="loginError"></div>
+      <button class="primary wide" id="loginButton" type="submit">登录</button>
+      <div class="form-error" id="loginError" role="alert"></div>
     </form>
   </div>
 
   <main class="shell hidden" id="app">
-    <header class="topbar">
+    <header class="topbar" id="topbar">
       <div class="brand"><div class="brand-mark small">S2</div><div><strong>Sub2API</strong><span>自定义 Key 用量管理</span></div></div>
-      <div><span id="roleLabel" class="role-label"></span><button class="text-button hidden" id="changeSecretButton">修改登录密钥</button><button class="text-button" id="logoutButton">退出登录</button></div>
+      <nav class="account-nav" aria-label="账号导航">
+        <span id="roleLabel" class="role-label"></span>
+        <div class="announcement-slot" id="announcementSlot">
+          <div class="announcement-surface is-docked" id="announcementSurface">
+            <button class="announcement-nav-button" id="openAnnouncementButton" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="announcementDialog"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="m4 10 13-5v14L4 14zM4 10H2v4h2m3 1 1 5h3l-1-4M21 8v8"/></svg><span>公告</span><span class="announcement-dot hidden" id="announcementDot" aria-hidden="true"></span></button>
+            <section class="announcement-expanded">
+              <div class="announcement-head"><div><p class="announcement-eyebrow">重要公告 · 额度规则</p><h2 id="announcementTitle">使用前，请先了解额度规则</h2></div><button class="announcement-close hidden" id="closeAnnouncementButton" type="button" aria-label="收起公告">×</button></div>
+              <p class="announcement-hint" id="announcementHint">请阅读以下规则，点击“我已知晓”后继续使用。</p>
+              <div class="announcement-body" id="announcementBody"></div>
+              <p class="announcement-footnote">确认后公告会收纳到顶部，随时可以再次查看。</p>
+              <div class="announcement-error" id="announcementError" role="alert"></div>
+              <div class="announcement-actions"><button class="text-button" id="announcementLogoutButton" type="button">退出登录</button><button class="primary" id="acknowledgeAnnouncementButton" type="button">我已知晓</button></div>
+            </section>
+          </div>
+        </div>
+        <button class="text-button hidden" id="changeSecretButton" type="button">修改登录密钥</button>
+        <button class="text-button" id="logoutButton" type="button">退出登录</button>
+      </nav>
     </header>
 
     <section class="access-management hidden" id="accessManagement" aria-label="登录密钥管理">
@@ -41,13 +60,15 @@
       <div class="hero-actions"><div class="schedule-pill"><span>距每周重置</span><strong id="resetCountdown">--d--h--m</strong></div><button class="secondary" id="refreshButton">刷新数据</button><button class="primary hidden" id="openAddButton">＋ 添加自定义 Key</button></div>
     </section>
 
-    <button type="button" class="notice quota-rules-notice" id="quotaRulesNotice" aria-label="关闭额度规则公告" aria-describedby="quotaRulesText"><span class="notice-icon" aria-hidden="true">i</span><span class="quota-rules-text" id="quotaRulesText"><strong>额度规则：</strong>周刷新重置 API Key 用量，月刷新恢复账号总额度，可在账号卡片独立开关；体验额度不自动刷新。有效奖励优先抵扣，不计入原额度；发奖不会启用已停用的 Key。用量统计展示实际消费，含奖励消费。</span><span class="quota-rules-close" aria-hidden="true">×</span></button>
     <section class="usage-summary" id="usageSummary" aria-label="全部 Key 用量汇总"></section>
     <div id="budgetStatus" class="budget-status" role="status"></div>
     <div id="syncStatus" class="sync-status"></div>
     <section class="reward-panel hidden" aria-label="临时奖励"><div class="reward-heading"><h2>临时奖励</h2><button class="secondary hidden" id="openRewardButton">＋ 发放奖励</button></div><div id="rewardList"></div></section>
     <section class="key-grid" id="keyGrid"><div class="loading">正在读取 Sub2API 数据…</div></section>
   </main>
+
+  <div class="announcement-shade hidden" id="announcementShade" aria-hidden="true"></div>
+  <dialog class="announcement-dialog" id="announcementDialog" aria-labelledby="announcementTitle" aria-describedby="announcementHint"></dialog>
 
   <div class="overlay hidden" id="addOverlay">
     <form class="modal" id="addForm">

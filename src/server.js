@@ -9,6 +9,7 @@ import { UpstreamError } from './sub2api.js';
 import { KeyManager, ManagerError } from './manager.js';
 import { safeEqual, hashKey } from './utils.js';
 import { reordered, closeAccountingWindow } from './budget-policy.js';
+import { announcement, announcementView } from './announcement.js';
 
 const port = Number(process.env.PORT || 3000);
 const adminPassword = process.env.ADMIN_PASSWORD || '111';
@@ -91,6 +92,19 @@ async function handleApi(request, response, url) {
   if (method !== 'GET' && method !== 'HEAD') requireCsrf(request, session);
 
   if (method === 'GET' && url.pathname === '/api/session') return sendJson(response,200,sessionView(session));
+  if (method === 'POST' && url.pathname === '/api/announcement/acknowledge') {
+    const body = await readBody(request);
+    if (body?.version !== announcement.version) throw new HttpError('公告已更新，请刷新页面后重新确认', 409);
+    await exclusive(async () => {
+      const next = store.getState();
+      const identity = announcementIdentity(session);
+      next.announcementAcknowledgements ??= {};
+      if (next.announcementAcknowledgements[identity]?.version === announcement.version) return;
+      next.announcementAcknowledgements[identity] = { version: announcement.version, acknowledgedAt: new Date().toISOString() };
+      await store.saveState(next);
+    });
+    return sendJson(response, 200, { announcement: sessionView(session).announcement });
+  }
   if(method==='PUT'&&url.pathname==='/api/access-keys/order'){
     requireSuperadmin(session);const body=await readBody(request);
     await exclusive(async()=>{
@@ -295,8 +309,14 @@ function accessKeyView(entry) {
 }
 
 function sessionView(session) {
-  const entry = store.getState().accessKeys.find(item => item.id === session.accessKeyId);
-  return { authenticated: true, csrfToken: session.csrfToken, role: session.role, accessKey: entry ? accessKeyView(entry) : null };
+  const snapshot = store.getState();
+  const entry = snapshot.accessKeys.find(item => item.id === session.accessKeyId);
+  const notice = announcementView(snapshot.announcementAcknowledgements?.[announcementIdentity(session)]);
+  return { authenticated: true, csrfToken: session.csrfToken, role: session.role, accessKey: entry ? accessKeyView(entry) : null, announcement: notice };
+}
+
+function announcementIdentity(session) {
+  return session.role === 'superadmin' ? 'superadmin' : `access:${session.accessKeyId}`;
 }
 
 function accessKeyList() {
