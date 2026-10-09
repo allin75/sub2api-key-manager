@@ -29,6 +29,8 @@ Use ESM JavaScript, two-space indentation, semicolons, and single quotes. Prefer
 
 Keep UI state in `public/app.js`; render dynamic text with `escapeHtml`. Use scoped CSS names such as `quota-warning`, never generic state names like `warning` that can collide with shared styles. There is no formatter or linter configured; run `node --check src/*.js public/app.js` before committing UI or server changes.
 
+Use concise UI headings. Avoid duplicate eyebrow titles and helper text that only explains an obvious feature.
+
 ## Testing Guidelines
 
 Add focused tests for new behavior. Budget changes should cover boundary values, cross-month behavior, retry paths, and key status ownership. Use mock Sub2API behavior in `test/http.test.js` and `test/budget.test.js`; never point tests at the production account or disable real keys.
