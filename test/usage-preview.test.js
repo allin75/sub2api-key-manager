@@ -32,6 +32,33 @@ test('seven-day preview moves below when the outer edge or second column is unav
   assert.equal(mobile.width, 362);
 });
 
+test('large-screen previews fit both outer gutters at their scaled reading width', () => {
+  for (const [viewport, shellWidth, padding, previewWidth] of [[2560, 1560, 27.5, 425], [3840, 2200, 33, 510]]) {
+    const left = (viewport - shellWidth) / 2 + padding;
+    const right = viewport - left;
+    const grid = { left, width: right - left };
+    const box = { left, right: viewport / 2 - 10, top: 300, width: viewport / 2 - 10 - left, height: 450 };
+    const other = { ...box, left: viewport / 2 + 10, right };
+    for (const card of [box, other]) {
+      const placement = context.usagePreviewPlacement(card, grid, viewport, true, previewWidth);
+      assert.equal(placement.side, card === box ? 'left' : 'right');
+      assert.equal(placement.width, previewWidth);
+      const position = context.usagePreviewSidePosition(card, placement.side, viewport, 1440, previewWidth);
+      assert.equal(position.width, previewWidth);
+      assert.ok(position.left >= 12 && position.left + position.width <= viewport - 12);
+    }
+  }
+});
+
+test('scaled previews fall back below at insufficient side space and keep detached gaps', () => {
+  const card = { left: 420, right: 1200, top: 800, width: 780, height: 500 };
+  assert.equal(context.usagePreviewPlacement(card, { left: 420, width: 1720 }, 2560, true, 425).side, 'bottom');
+  const shifted = context.usagePreviewSidePosition({ ...card, left: 440 }, 'left', 2560, 1000, 425);
+  assert.equal(shifted.detached, true);
+  assert.equal(shifted.width, 412);
+  assert.equal(shifted.left + shifted.width + shifted.gap, 440);
+});
+
 test('a vertically shifted preview leaves a gap and points only to its source card', () => {
   const thirdCard = { left: 355, right: 945, top: 732, width: 590, height: 371 };
   const shifted = context.usagePreviewSidePosition(thirdCard, 'left', 1920, 945);
