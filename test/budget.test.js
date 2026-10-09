@@ -6,7 +6,7 @@ import { hashKey } from '../src/utils.js';
 import { monthId, nextCheck, FIVE_MINUTES } from '../src/budget-policy.js';
 
 function setup(iso='2026-09-18T10:00:00+08:00') {
-  let now=new Date(iso),state=structuredClone(initialState),failRead=false,failWrite=null;
+  let now=new Date(iso),state=structuredClone(initialState),failRead=false,failWrite=null,offset=0;
   const all=[{id:1,key:'sk-one-12345678901234',status:'active',quota:100,quota_used:3},
     {id:2,key:'sk-two-12345678901234',status:'active',quota:100,quota_used:4},
     {id:3,key:'sk-other-12345678901',status:'active',quota:100,quota_used:0}];
@@ -14,27 +14,29 @@ function setup(iso='2026-09-18T10:00:00+08:00') {
   const costs={1:30,2:20,3:90},calls=[],records=[];
   const store={getState:()=>structuredClone(state),saveState:async s=>{state=structuredClone(s)}};
   const upstream={listAllKeys:async()=>{calls.push(['list']);if(failRead)throw Error('offline');return structuredClone(all)},
+    getKey:async id=>{calls.push(['key',id]);if(failRead)throw failRead instanceof Error?failRead:Error('offline');return structuredClone(all.find(key=>key.id===id))},
     getUsageRecords:async(id,start,end)=>{if(failRead)throw Error('offline');return structuredClone(records.filter(r=>r.apiKeyId===id&&r.at>=start&&r.at<end))},
     getUsageForKey:async id=>{calls.push(['usage',id]);if(failRead)throw Error('offline');return Object.fromEntries(['yesterday','today','week','month','lastMonth'].map(p=>[p,{cost:costs[id],requests:1}]))},
     updateKeyStatus:async(id,status)=>{calls.push(['status',id,status]);if(failWrite===id)throw Error('write failed');all.find(k=>k.id===id).status=status},
     updateKeyQuota:async(id,quota)=>{calls.push(['quota',id,quota]);all.find(k=>k.id===id).quota=quota},
     resetKey:async id=>{calls.push(['reset',id]);all.find(k=>k.id===id).quota_used=0}};
-  let manager=new KeyManager({store,upstream,clock:()=>now});
-  return {get m(){return manager},get state(){return state},all,costs,calls,records,
+  let manager=new KeyManager({store,upstream,clock:()=>now,scheduleOffset:()=>offset});
+  return {get m(){return manager},get state(){return state},all,costs,calls,records,upstream,
+    offset:value=>{offset=value},
     at:iso=>{now=new Date(iso)},advance:ms=>{now=new Date(now.getTime()+ms)},
     failRead:v=>{failRead=v},failWrite:id=>{failWrite=id},
-    restart:()=>{manager=new KeyManager({store,upstream,clock:()=>now})}};
+    restart:()=>{manager=new KeyManager({store,upstream,clock:()=>now,scheduleOffset:()=>offset})}};
 }
 
-test('calendar polling handles weekdays, weekends, 95%, night and boundaries',()=>{
-  const next=(date,near=false)=>nextCheck(new Date(date),near);
-  assert.equal(next('2026-09-18T08:00:00+08:00'),'2026-09-18T00:05:00.000Z');
-  assert.equal(next('2026-09-18T18:29:00+08:00'),'2026-09-18T10:30:00.000Z');
-  assert.equal(next('2026-09-18T18:30:00+08:00'),'2026-09-18T12:30:00.000Z');
-  assert.equal(next('2026-09-19T09:00:00+08:00'),'2026-09-19T03:00:00.000Z');
-  assert.equal(next('2026-09-19T09:00:00+08:00',true),'2026-09-19T01:05:00.000Z');
-  assert.equal(next('2026-09-18T21:59:00+08:00',true),'2026-09-18T14:00:00.000Z');
-  assert.equal(next('2026-09-18T22:00:00+08:00',true),'2026-09-19T00:00:00.000Z');
+test('hourly polling uses fixed minute slots on weekdays and weekends with a night pause',()=>{
+  const next=(date,offset=0)=>nextCheck(new Date(date),offset);
+  assert.equal(next('2026-09-18T08:00:00+08:00'),'2026-09-18T01:00:00.000Z');
+  assert.equal(next('2026-09-18T18:29:00+08:00'),'2026-09-18T11:00:00.000Z');
+  assert.equal(next('2026-09-18T18:30:00+08:00'),'2026-09-18T11:00:00.000Z');
+  assert.equal(next('2026-09-19T09:00:00+08:00'),'2026-09-19T02:00:00.000Z');
+  assert.equal(next('2026-09-19T09:00:00+08:00',10),'2026-09-19T01:10:00.000Z');
+  assert.equal(next('2026-09-18T21:59:00+08:00',20),'2026-09-19T00:20:00.000Z');
+  assert.equal(next('2026-09-18T22:00:00+08:00',10),'2026-09-19T00:10:00.000Z');
   assert.equal(next('2026-09-18T07:59:00+08:00'),'2026-09-18T00:00:00.000Z');
   assert.equal(monthId(new Date('2026-09-30T16:00:00Z')),'2026-10');
 });
@@ -53,9 +55,9 @@ test('originally inactive keys are not re-enabled',async()=>{
   const f=setup();f.all[1].status='inactive';await f.m.setBudget(40);await f.m.setBudget(100);
   assert.equal(f.all[0].status,'active');assert.equal(f.all[1].status,'inactive');
 });
-test('95 percent changes low frequency to five minutes without disabling',async()=>{
-  const f=setup('2026-09-19T10:00:00+08:00');await f.m.setBudget(100);assert.equal(f.m.view().budget.nextCheckAt,'2026-09-19T04:00:00.000Z');
-  f.costs[1]=75;await f.m.setBudget(100);assert.equal(f.m.view().budget.nextCheckAt,'2026-09-19T02:05:00.000Z');assert.equal(f.all[0].status,'active');
+test('95 percent keeps the hourly schedule without disabling',async()=>{
+  const f=setup('2026-09-19T10:00:00+08:00');await f.m.setBudget(100);assert.equal(f.m.view().budget.nextCheckAt,'2026-09-19T03:00:00.000Z');
+  f.costs[1]=75;await f.m.setBudget(100);assert.equal(f.m.view().budget.nextCheckAt,'2026-09-19T03:00:00.000Z');assert.equal(f.all[0].status,'active');
 });
 test('failed consumption read keeps previous balance and never restores keys',async()=>{
   const f=setup();await f.m.setBudget(50);f.failRead(true);await f.m.setBudget(100);
@@ -90,12 +92,87 @@ test('new key counts existing current month consumption immediately',async()=>{
 test('views and simultaneous refreshes share cache with global throttle',async()=>{
   const f=setup();await Promise.all([f.m.refresh(),f.m.refresh(),f.m.refresh()]);
   const n=f.calls.length;f.m.view();await f.m.refresh();assert.equal(f.calls.length,n);
-  f.advance(FIVE_MINUTES);await f.m.refresh();assert.equal(f.calls.filter(c=>c[0]==='list').length,2);
+  f.advance(FIVE_MINUTES);await f.m.refresh();assert.equal(f.calls.filter(c=>c[0]==='list').length,1);
+  assert.deepEqual(f.calls.filter(c=>c[0]==='key').map(c=>c[1]),[1,2]);
 });
 test('night pauses consumption reads even when above 95 percent',async()=>{
   const f=setup('2026-09-18T21:59:00+08:00');f.costs[1]=75;await f.m.setBudget(100);const n=f.calls.length;
   f.at('2026-09-19T22:00:00+08:00');await f.m.tick();assert.equal(f.calls.length,n);
   f.at('2026-09-20T08:00:00+08:00');await f.m.tick();assert.ok(f.calls.length>n);
+});
+
+test('administrator slots wait until their own minute, repeat hourly and survive restart',async()=>{
+  for(const offset of [0,10,20]){
+    const f=setup('2026-09-18T07:59:00+08:00');f.offset(offset);
+    await f.m.tick();assert.equal(f.calls.length,0);
+    f.at(`2026-09-18T08:${String(offset).padStart(2,'0')}:00+08:00`);await f.m.tick();
+    assert.equal(f.calls.filter(c=>c[0]==='usage').length,2);
+    assert.equal(f.m.view().budget.nextCheckAt,`2026-09-18T01:${String(offset).padStart(2,'0')}:00.000Z`);
+    f.restart();f.advance(FIVE_MINUTES);await f.m.tick();assert.equal(f.calls.filter(c=>c[0]==='usage').length,2);
+    f.at(`2026-09-18T09:${String(offset).padStart(2,'0')}:00+08:00`);await f.m.tick();assert.equal(f.calls.filter(c=>c[0]==='usage').length,4);
+  }
+});
+
+test('legacy schedules move to the next own slot without a startup refresh burst',async()=>{
+  const f=setup('2026-09-18T08:05:00+08:00');await f.m.refresh();f.offset(20);
+  delete f.state.cache.schedulePolicy;f.state.cache.nextCheckAt='2026-09-18T00:01:00.000Z';
+  f.restart();const calls=f.calls.length;await f.m.tick();assert.equal(f.calls.length,calls);
+  assert.equal(f.m.view().budget.nextCheckAt,'2026-09-18T00:20:00.000Z');
+});
+
+test('normal failures retain cache, log safe connection details and record a later recovery',async()=>{
+  const f=setup();await f.m.refresh();const last=f.m.view().budget.lastSuccessAt;
+  const error=new Error('password=private sk-secret upstream raw response',{cause:{code:'UND_ERR_CONNECT_TIMEOUT'}});
+  f.failRead(error);f.advance(FIVE_MINUTES);await f.m.refresh();
+  assert.equal(f.m.view().budget.lastSuccessAt,last);assert.equal(f.m.view().budget.used,50);
+  assert.equal(f.m.syncView().events.at(-1).code,'UND_ERR_CONNECT_TIMEOUT');
+  assert.equal(f.m.syncView().events.at(-1).stage,'key-read');
+  assert.ok(!JSON.stringify(f.m.syncView()).includes('private'));
+  f.restart();assert.equal(f.m.syncView().events.length,1);
+  f.failRead(false);f.advance(FIVE_MINUTES);await f.m.refresh();
+  assert.deepEqual(f.m.syncView().events.map(event=>event.kind),['failed','recovered']);
+  assert.ok(f.m.view().budget.lastSuccessAt>last);assert.equal(f.m.syncView().inProgress,false);
+});
+
+test('normal sync does not query unrelated keys and identity mismatch never triggers a full scan',async()=>{
+  const f=setup();await f.m.refresh();f.calls.length=0;f.advance(FIVE_MINUTES);await f.m.refresh();
+  assert.deepEqual(f.calls.filter(c=>c[0]==='key'||c[0]==='usage'),[['key',1],['key',2],['usage',1],['usage',2]]);
+  const last=f.m.view().budget.lastSuccessAt;
+  f.all[0].key='sk-different-owner-123456';f.calls.length=0;f.advance(FIVE_MINUTES);await f.m.refresh();
+  assert.equal(f.calls.filter(c=>c[0]==='list').length,0);assert.equal(f.calls.filter(c=>c[0]==='usage').length,0);
+  assert.equal(f.m.view().budget.lastSuccessAt,last);assert.equal(f.m.syncView().events.at(-1).kind,'failed');
+});
+
+test('in-progress status is observable during a slow read and clears when complete',async()=>{
+  const f=setup();const original=f.upstream.getUsageForKey;let release,entered;
+  const started=new Promise(resolve=>{entered=resolve});
+  const pause=new Promise(resolve=>{release=resolve});
+  f.upstream.getUsageForKey=async id=>{entered();await pause;return original(id)};
+  const refresh=f.m.refresh();await started;
+  assert.equal(f.m.syncView().inProgress,true);assert.equal(f.m.syncView().source,'manual');
+  assert.equal(f.m.syncView().stage,'usage-read');assert.equal(f.m.view().budget.lastSuccessAt,null);
+  release();await refresh;assert.equal(f.m.syncView().inProgress,false);
+});
+
+test('state-change failures retain their underlying connection code and affected key',async()=>{
+  const f=setup();
+  f.upstream.updateKeyStatus=async()=>{throw new Error('request failed',{cause:{code:'ECONNRESET'}})};
+  await f.m.setBudget(40);
+  const event=f.m.syncView().events.at(-1);
+  assert.equal(event.stage,'status-write');assert.equal(event.code,'ECONNRESET');assert.equal(event.keyId,'2');
+  assert.equal(f.m.syncView().inProgress,false);
+});
+
+test('sync records remain bounded and quota save distinguishes a failed following read',async()=>{
+  const f=setup();await f.m.refresh();
+  const last=f.m.view().budget.lastSuccessAt;
+  const original=f.upstream.updateKeyQuota;
+  f.upstream.updateKeyQuota=async(...args)=>{await original(...args);f.failRead(true)};
+  const result=await f.m.quota('1',80);
+  assert.equal(result.quotaSaved,true);assert.equal(result.pendingSync,true);assert.equal(f.all[0].quota,80);
+  assert.equal(result.keys[0].quota,100);assert.equal(result.budget.lastSuccessAt,last);
+  for(let i=0;i<205;i++){f.advance(FIVE_MINUTES);await f.m.refresh();}
+  assert.equal(f.m.syncView().events.length,200);
 });
 test('monthly block prevents weekly reset or quota edit reactivation',async()=>{
   const f=setup('2026-09-21T06:00:00+08:00');await f.m.setBudget(50);await f.m.tick();

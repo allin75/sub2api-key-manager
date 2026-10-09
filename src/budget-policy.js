@@ -9,15 +9,15 @@ export function nextMonthAt(now) {
   const d=wallDate(now);
   return new Date(Date.UTC(d.getUTCFullYear(),d.getUTCMonth()+1,1)-8*3600000).toISOString();
 }
-export function nextCheck(now, nearLimit=false) {
-  const d=wallDate(now), minute=d.getUTCHours()*60+d.getUTCMinutes();
+export function nextCheck(now, offsetMinutes=0, inclusive=false) {
+  const d=wallDate(now), hour=d.getUTCHours();
   const day=Date.UTC(d.getUTCFullYear(),d.getUTCMonth(),d.getUTCDate())-8*3600000;
-  const weekday=d.getUTCDay()>=1 && d.getUTCDay()<=5;
-  if(minute<480) return new Date(day+480*60000).toISOString();
-  if(minute>=1320) return new Date(day+86400000+480*60000).toISOString();
-  const high=nearLimit || (weekday && minute<1110);
-  const boundary=weekday && minute<1110 ? day+1110*60000 : day+1320*60000;
-  return new Date(Math.min(now.getTime()+(high?FIVE_MINUTES:7200000),boundary)).toISOString();
+  const offset = Number.isInteger(offsetMinutes) && offsetMinutes >= 0 && offsetMinutes < 60 ? offsetMinutes : 0;
+  if(hour<8) return new Date(day+(480+offset)*60000).toISOString();
+  let candidate=day+(hour*60+offset)*60000;
+  if(candidate<now.getTime() || (!inclusive && candidate===now.getTime())) candidate+=3600000;
+  if(candidate>=day+22*3600000) candidate=day+86400000+(480+offset)*60000;
+  return new Date(candidate).toISOString();
 }
 export function micros(cost) {
   const value=Number(cost);

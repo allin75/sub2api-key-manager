@@ -79,6 +79,16 @@ export function scopedStore(id) {
   };
 }
 
+export async function initializeSyncSlots() {
+  const next = getState();
+  let slot = Math.max(-1, ...next.accessKeys.map(entry => Number.isSafeInteger(entry.syncSlot) ? entry.syncSlot : -1)) + 1;
+  let changed = false;
+  for (const entry of next.accessKeys) {
+    if (!Number.isSafeInteger(entry.syncSlot)) { entry.syncSlot = slot++; changed = true; }
+  }
+  if (changed) await saveState(next);
+}
+
 export async function saveState(next) {
   validateState(next);
   const snapshot = structuredClone(next);
@@ -150,10 +160,14 @@ function validateState(value) {
   if (value.accessKeys !== undefined) {
     if (!Array.isArray(value.accessKeys) || !value.accessKeys.length) throw new Error('登录密钥配置无效');
     if(value.defaultAccessId!==undefined&&!value.accessKeys.some(entry=>entry.id===value.defaultAccessId))throw new Error('默认登录范围无效');
-    const ids = new Set(), secrets = new Set(), hashes = new Set();
+    const ids = new Set(), secrets = new Set(), hashes = new Set(), syncSlots = new Set();
     for (const entry of value.accessKeys) {
       if (typeof entry.id !== 'string' || !entry.id || ids.has(entry.id) || typeof entry.secret !== 'string' || !entry.secret || secrets.has(entry.secret) || !Array.isArray(entry.previousSecrets) || entry.previousSecrets.some(secret => typeof secret !== 'string') || !Array.isArray(entry.ownedHashes) || !entry.state || entry.state.accessKeys !== undefined) throw new Error('登录密钥配置无效');
       ids.add(entry.id); secrets.add(entry.secret);
+      if(entry.syncSlot!==undefined){
+        if(!Number.isSafeInteger(entry.syncSlot)||entry.syncSlot<0||syncSlots.has(entry.syncSlot))throw new Error('同步时隙无效');
+        syncSlots.add(entry.syncSlot);
+      }
       for (const hash of new Set([...entry.ownedHashes, ...entry.state.configuredKeys.map(key => key.keyHash), ...Object.keys(entry.state.budget.paused)])) {
         if (hashes.has(hash)) throw new Error('API Key 不可关联多个登录密钥');
         hashes.add(hash);
@@ -170,6 +184,12 @@ function validateState(value) {
   }
   if (!value.budget || (value.budget.limit !== null && (!Number.isFinite(value.budget.limit) || value.budget.limit <= 0))) throw new Error('月度额度配置无效');
   if (!value.budget.ledger || !value.budget.paused || !value.cache) throw new Error('月度账本配置无效');
+  if(value.configuredKeys.some(key=>key.upstreamId!==undefined&&(!Number.isSafeInteger(key.upstreamId)||key.upstreamId<=0)))throw new Error('上游 Key ID 配置无效');
+  if(value.cache.syncEvents!==undefined&&(!Array.isArray(value.cache.syncEvents)||value.cache.syncEvents.length>200||value.cache.syncEvents.some(event=>
+    !event||!['failed','recovered'].includes(event.kind)||!Number.isFinite(Date.parse(event.at))||typeof event.message!=='string'||event.message.length>240||
+    (event.code!==undefined&&!/^[A-Za-z0-9_]{1,64}$/.test(event.code))||
+    (event.status!=null&&(!Number.isInteger(event.status)||event.status<400||event.status>599))
+  )))throw new Error('同步记录无效');
   if (Object.values(value.budget.ledger).some(cost => !Number.isSafeInteger(cost) || cost < 0)) throw new Error('月度费用快照无效');
   const b=value.budget;
   for(const field of ['weeklyResetEnabled','monthlyResetEnabled'])if(b[field]!==undefined&&typeof b[field]!=='boolean')throw new Error('刷新开关无效');

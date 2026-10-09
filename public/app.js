@@ -9,6 +9,10 @@ let transferKeyId='';
 for(const id of ['budgetType','accessType','rewardList','openRewardButton','rewardOverlay','rewardForm','rewardAmount','rewardExpiry','rewardError','closeRewardButton','cancelRewardButton','saveRewardButton'])elements[id]=document.getElementById(id);
 for (const id of ['sessionLoading','loginButton','topbar','announcementSlot','announcementSurface','openAnnouncementButton','announcementDot','announcementDialog','announcementShade','announcementTitle','announcementHint','announcementBody','announcementError','closeAnnouncementButton','acknowledgeAnnouncementButton']) elements[id] = document.getElementById(id);
 const activeUiAnimations = new Set();
+for (const id of ['syncProgress','syncHistory','syncHistoryList']) elements[id] = document.getElementById(id);
+state.sync = null;
+let manualRefreshPending = false;
+let syncStatusLoading = false;
 for (const id of ['announcementEyebrow','announcementFootnote','noticeComposer','noticeComposerForm','noticeRecipient','noticeTitleInput','noticeBodyInput','noticePublishButton','noticeComposerError','noticeHistory','closeNoticeComposerButton']) elements[id] = document.getElementById(id);
 state.notices = [];
 state.policyAnnouncement = null;
@@ -476,6 +480,7 @@ function showLogin() {
   setBusy(elements.logoutButton, false, '退出登录');
   elements.password.disabled = false;
   closeUsagePreview();
+  resetSyncUi();
   closeBudget(); closeAdd(); closeQuota(); closeAccess(); closeTransfer(); closeReward(); closeNoticeComposer();
   state.loadVersion++;
   state.csrfToken='';state.keys=[];state.budget=null;state.accessKeys=[];state.accessKey=null;state.selectedAccessId='';state.rewards=[];state.sorting=false;elements.rewardList.innerHTML='';
@@ -488,9 +493,9 @@ function showLogin() {
 }
 
 async function loadKeys(showMessage=false) {
-  if(state.sorting||state.policySaving)return;
+  if(state.sorting||state.policySaving||manualRefreshPending)return;
   const version=++state.loadVersion;
-  setBusy(elements.refreshButton,true,'刷新中…');
+  if(showMessage){manualRefreshPending=true;updateRefreshFeedback();}
   if(!state.keys.length)elements.keyGrid.innerHTML='<div class="loading">正在读取用量数据…</div>';
   try {
     if(state.role==='superadmin') {
@@ -508,11 +513,53 @@ async function loadKeys(showMessage=false) {
     if(selected){selected.budget=data.budget;selected.rewards=state.rewards;selected.keyCount=data.keys.length;}
     renderAccessKeys();renderCurrentAccess();
     renderSummary(); renderKeys(); renderSchedule();renderRewards();
+    void readSyncStatus();
     if(showMessage) toast(data.cached?'已显示缓存，手动刷新最多每 5 分钟一次':data.budget?.stale?'同步未完成，保留最近成功数据':'数据已刷新');
     checkBudgetNotification();
   } catch(error) {
     if(version===state.loadVersion)elements.syncStatus.textContent=error.message;
-  } finally { if(version===state.loadVersion)setBusy(elements.refreshButton,false,'刷新数据'); }
+  } finally { if(version===state.loadVersion&&showMessage){manualRefreshPending=false;updateRefreshFeedback();void readSyncStatus();} }
+}
+
+function resetSyncUi() {
+  state.sync=null;manualRefreshPending=false;
+  elements.syncHistory.classList.add('hidden');elements.syncHistory.open=false;elements.syncHistoryList.innerHTML='';
+  updateRefreshFeedback();
+}
+
+function updateRefreshFeedback() {
+  const busy=manualRefreshPending||!!state.sync?.inProgress;
+  setBusy(elements.refreshButton,busy,busy?'刷新中…':'刷新数据');
+  elements.refreshButton.classList.toggle('sync-refreshing',busy);
+  elements.refreshButton.setAttribute('aria-busy',String(busy));
+  elements.syncProgress.classList.toggle('hidden',!busy);
+  elements.syncProgress.textContent=busy?'正在刷新数据…':'';
+}
+
+function renderSyncHistory(events) {
+  elements.syncHistory.classList.toggle('hidden',!events?.length);
+  const stages={'key-read':'读取 Key','usage-read':'读取用量','detail-read':'读取消费明细','status-write':'更新 Key 状态'};
+  elements.syncHistoryList.className='sync-history-list';
+  elements.syncHistoryList.innerHTML=[...(events||[])].reverse().map(event=>{
+    const key=state.keys.find(item=>item.id===event.keyId);
+    const details=[event.kind==='failed'?'同步失败':'同步恢复',key?.name,stages[event.stage],event.message,event.code,event.status?`HTTP ${event.status}`:null].filter(Boolean).join(' · ');
+    return `<div class="sync-history-item sync-${event.kind==='failed'?'failed':'recovered'}"><time>${escapeHtml(formatSyncTime(event.at))}</time><div>${escapeHtml(details)}</div></div>`;
+  }).join('');
+}
+
+async function readSyncStatus() {
+  if(syncStatusLoading||document.hidden||elements.app.classList.contains('hidden'))return;
+  const version=viewVersion,id=state.selectedAccessId;
+  syncStatusLoading=true;
+  try {
+    const status=await api('/api/sync-status');
+    if(version!==viewVersion||id!==state.selectedAccessId)return;
+    state.sync=status;updateRefreshFeedback();renderSyncHistory(status.events);
+    if(!manualRefreshPending&&state.budget&&(status.lastSuccessAt!==state.budget.lastSuccessAt||status.error!==state.budget.error))await loadKeys();
+  } catch {
+    if(version===viewVersion&&id===state.selectedAccessId){state.sync=null;updateRefreshFeedback();}
+  }
+  finally {syncStatusLoading=false;}
 }
 
 function currentAccess(){return state.role==='superadmin'?state.accessKeys.find(entry=>entry.id===state.selectedAccessId):state.accessKey;}
@@ -560,6 +607,7 @@ function renderAccessKeys(){
 async function selectAccess(id){
   if(state.sorting||state.policySaving)return;
   closeUsagePreview();
+  resetSyncUi();
   state.selectedAccessId=id;state.keys=[];state.budget=null;state.rewards=[];renderRewards();
   elements.usageSummary.innerHTML='';elements.budgetStatus.textContent='';elements.syncStatus.textContent='';
   renderCurrentAccess();renderAccessKeys();
@@ -652,7 +700,7 @@ function renderSummary(){
   const details=b?.limit!=null?`${label} · ${b.used===null?'用量待同步':`已计入 ${money(b.used)}`}${b.overage>0?` · 超出 ${money(b.overage)}`:''} · ${b.type==='trial'?'不自动刷新':b.monthlyResetEnabled?`下月刷新 ${formatTime(b.nextMonthAt)}`:'月刷新关闭 · 已用量持续累计'}`:'原额度由超级管理员设置后启用';
   elements.budgetStatus.textContent=`${b?.status==='blocked'?'原额度已用尽且无可用奖励，已配置 Key 暂停使用。 ':''}${details}${b?.pendingCount?` · ${b.pendingCount} 项状态变更待重试`:''}`;
   elements.budgetStatus.classList.toggle('budget-blocked',b?.status==='blocked');
-  elements.syncStatus.textContent=`${b?.stale?'数据待同步 · ':''}最后成功更新：${b?.lastSuccessAt?formatTime(b.lastSuccessAt):'暂无'} · 下次检查：${b?.nextCheckAt?formatTime(b.nextCheckAt):'等待调度'}${b?.error?` · ${b.error}`:''}`;
+  elements.syncStatus.textContent=`数据刷新于：${b?.lastSuccessAt?formatSyncTime(b.lastSuccessAt):'尚未成功刷新'} · 下次刷新：${b?.nextCheckAt?formatSyncTime(b.nextCheckAt):'等待调度'}${b?.error?` · ${b.error}`:''}`;
 }
 
 function budgetNoticeKey(accessId, budget) {
@@ -706,19 +754,22 @@ function closeAdd(){elements.addOverlay.classList.add('hidden');elements.addForm
 let quotaKeyId='';
 function openQuota(id,name,value){quotaKeyId=id;elements.quotaDescription.textContent=`调整“${name}”的额度上限，单位为 USD。`;elements.quotaInput.value=Number(value||0);elements.quotaError.textContent='';elements.quotaOverlay.classList.remove('hidden');elements.quotaInput.focus()}
 function closeQuota(){elements.quotaOverlay.classList.add('hidden');elements.quotaForm.reset();elements.quotaError.textContent='';quotaKeyId=''}
-async function updateQuota(event){event.preventDefault();const quota=Number(elements.quotaInput.value);if(!Number.isFinite(quota)||quota<0){elements.quotaError.textContent='请输入不小于 0 的数字';return}try{await api(`/api/keys/${encodeURIComponent(quotaKeyId)}`,{method:'PUT',body:{quota}});closeQuota();toast('配额已更新');await loadKeys()}catch(error){elements.quotaError.textContent=error.message}}
+async function updateQuota(event){event.preventDefault();const quota=Number(elements.quotaInput.value);if(!Number.isFinite(quota)||quota<0){elements.quotaError.textContent='请输入不小于 0 的数字';return}try{const result=await api(`/api/keys/${encodeURIComponent(quotaKeyId)}`,{method:'PUT',body:{quota}});closeQuota();toast(result.pendingSync?'配额已保存，数据刷新失败，暂时显示旧数据':'配额已更新');await loadKeys()}catch(error){elements.quotaError.textContent=error.message}}
 function setBusy(button,busy,text){button.disabled=busy;button.textContent=text}
 function money(value){return `$${Number(value||0).toFixed(2)}`}
 function pad(value){return String(value).padStart(2,'0')}
 function formatTime(value){if(!value)return'尚未使用';return new Intl.DateTimeFormat('zh-CN',{dateStyle:'medium',timeStyle:'short'}).format(new Date(value))}
+function formatSyncTime(value){return new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',dateStyle:'medium',timeStyle:'medium'}).format(new Date(value));}
 function formatCountdown(milliseconds){const totalMinutes=Math.max(0,Math.floor(milliseconds/60000));const days=Math.floor(totalMinutes/1440);const hours=Math.floor(totalMinutes%1440/60);const minutes=totalMinutes%60;return `${days}d${hours}h${minutes}m`}
 setInterval(renderSchedule,60000);
 setInterval(()=>{if(!elements.app.classList.contains('hidden'))loadKeys()},60000);
+setInterval(()=>{void readSyncStatus();},5000);
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)void readSyncStatus();});
 function escapeHtml(value){return String(value??'').replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]))}
 function toast(message){elements.toast.textContent=message;elements.toast.classList.add('show');setTimeout(()=>elements.toast.classList.remove('show'),3000)}
 
 async function api(url, options={}) {
-  if(state.role==='superadmin'&&state.selectedAccessId&&/^\/api\/(keys(?:\/|$)|budget$|refresh$|rewards$)/.test(url))url+=`?accessKeyId=${encodeURIComponent(state.selectedAccessId)}`;
+  if(state.role==='superadmin'&&state.selectedAccessId&&/^\/api\/(keys(?:\/|$)|budget$|refresh$|rewards$|sync-status$)/.test(url))url+=`?accessKeyId=${encodeURIComponent(state.selectedAccessId)}`;
   const headers={Accept:'application/json',...(options.body?{'Content-Type':'application/json'}:{}),...(state.csrfToken?{'X-CSRF-Token':state.csrfToken}:{})};
   const response=await fetch(url,{method:options.method||'GET',headers,credentials:'same-origin',body:options.body?JSON.stringify(options.body):undefined});
   const data=await response.json().catch(()=>({error:'服务器返回格式错误'}));

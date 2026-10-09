@@ -2,6 +2,20 @@ import crypto from 'node:crypto';
 
 export const RESET_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000;
 
+export function syncErrorDetail(error) {
+  const origin = error?.cause || error;
+  const rawCode = origin?.cause?.code || origin?.code || origin?.name || 'UNKNOWN';
+  const code = /^[A-Z_a-z0-9]{1,64}$/.test(String(rawCode)) ? String(rawCode) : 'UNKNOWN';
+  const rawStatus = origin?.status ?? error?.status;
+  const status = Number.isInteger(rawStatus) && rawStatus >= 400 && rawStatus <= 599 ? rawStatus : null;
+  let message = '上游数据读取失败';
+  if (/TIMEOUT|AbortError|TimeoutError/i.test(code)) message = '上游连接或请求超时';
+  else if (/ENOTFOUND|EAI_AGAIN/.test(code)) message = '上游域名解析失败';
+  else if (/ECONNREFUSED|ECONNRESET|EHOSTUNREACH|ENETUNREACH|UND_ERR_SOCKET/.test(code)) message = '上游连接中断或不可达';
+  else if (status) message = `上游返回 HTTP ${status}`;
+  return {message,code,status};
+}
+
 export function hashKey(value) {
   return crypto.createHash('sha256').update(value).digest('hex');
 }

@@ -50,6 +50,7 @@ test('HTTP roles, CSRF, cache, and budget enforcement through mock Sub2API',asyn
     let raw='';for await(const c of req)raw+=c;const body=JSON.parse(raw||'{}');let data;
     if(req.url==='/api/v1/auth/login'){loginCount++;data={access_token:'test-token',expires_in:3600};}
     else if(req.url.startsWith('/api/v1/keys?')){readCount++;data={items:upstreamKeys,pages:1};}
+    else if(/^\/api\/v1\/keys\/[12]$/.test(req.url)&&req.method==='GET'){data=upstreamKeys.find(k=>k.id===Number(req.url.split('/').pop()));}
     else if(req.url.startsWith('/api/v1/usage?')){const url=new URL(req.url,'http://localhost');data={items:usageRecords.filter(r=>r.api_key_id===Number(url.searchParams.get('api_key_id'))),pages:1};}
     else if(/^\/api\/v1\/user\/api-keys\/[12]\/usage\/daily/.test(req.url)){
       if(req.url.includes('/api-keys/2/')&&failSecondUsageAfter!==null&&--failSecondUsageAfter===0){failSecondUsageAfter=null;res.writeHead(503);res.end('{}');return;}
@@ -108,6 +109,11 @@ test('HTTP roles, CSRF, cache, and budget enforcement through mock Sub2API',asyn
     assert.deepEqual(own.keys,[]);
     assert.equal(own.budget.limit,20);
     assert.equal((await request(`/api/keys?accessKeyId=${accessKeys[0].id}`,'GET',undefined,second)).status,403);
+    assert.equal((await request(`/api/sync-status?accessKeyId=${accessKeys[0].id}`,'GET',undefined,second)).status,403);
+    const readsBeforeStatus=readCount;
+    assert.equal((await request('/api/sync-status','GET',undefined,second)).status,200);
+    assert.equal((await request('/api/sync-status')).status,200);
+    assert.equal(readCount,readsBeforeStatus);
     assert.equal((await request('/api/keys/'+id,'PUT',{quota:1},second)).status,404);
     assert.equal((await request('/api/access-keys','POST',{secret:'second',limit:20},superadmin)).status,409);
     assert.equal((await request('/api/access-keys','POST',{secret:'superadmin',limit:20},superadmin)).status,409);

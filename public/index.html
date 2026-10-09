@@ -4,10 +4,10 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Sub2API Key 用量管理</title>
-  <link rel="stylesheet" href="/styles.css?v=20261009-2">
-  <link rel="stylesheet" href="/overrides.css?v=20261009-2">
+  <link rel="stylesheet" href="/styles.css?v=20261009-3">
+  <link rel="stylesheet" href="/overrides.css?v=20261009-3">
   <script src="/vendor/anime.umd.min.js?v=4.5.0" defer></script>
-  <script src="/app.js?v=20261009-2" defer></script>
+  <script src="/app.js?v=20261009-3" defer></script>
 </head>
 <body>
   <div class="session-loading" id="sessionLoading" role="status"><div class="brand-mark">S2</div><span>正在加载…</span></div>
@@ -63,6 +63,8 @@
     <section class="usage-summary" id="usageSummary" aria-label="全部 Key 用量汇总"></section>
     <div id="budgetStatus" class="budget-status" role="status"></div>
     <div id="syncStatus" class="sync-status"></div>
+    <p id="syncProgress" class="sync-progress hidden" role="status" aria-live="polite"></p>
+    <details id="syncHistory" class="sync-history hidden"><summary>同步记录</summary><div id="syncHistoryList"></div></details>
     <section class="reward-panel hidden" aria-label="临时奖励"><div class="reward-heading"><h2>临时奖励</h2><button class="secondary hidden" id="openRewardButton">＋ 发放奖励</button></div><div id="rewardList"></div></section>
     <section class="key-grid" id="keyGrid"><div class="loading">正在读取 Sub2API 数据…</div></section>
   </main>

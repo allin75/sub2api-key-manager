@@ -89,6 +89,13 @@ export async function getManagedKeys(configuredKeys) {
   return configuredKeys.map(configured => ({ configured, upstream: byHash.get(configured.keyHash) || null }));
 }
 
+export async function getKey(keyId) {
+  if (!Number.isSafeInteger(keyId) || keyId <= 0) throw new Error('上游 Key ID 无效');
+  const key = await upstream(`/api/v1/keys/${keyId}`);
+  if (key?.id !== keyId || typeof key.key !== 'string') throw new Error('上游 Key 返回数据无效');
+  return key;
+}
+
 export async function getUsageForKey(keyId, now = new Date()) {
   const data = await upstream(`/api/v1/user/api-keys/${keyId}/usage/daily?days=90&timezone=${encodeURIComponent(timeZone)}`);
   const items = Array.isArray(data) ? data : (data.items ?? data.data);

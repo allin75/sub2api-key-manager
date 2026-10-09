@@ -22,6 +22,7 @@ const sessionTtlMs = 12 * 60 * 60 * 1000;
 await store.loadStore();
 if (!store.getState().accessKeys && safeEqual(adminPassword,superPassword)) throw new Error('首次登录密钥与超级管理员密码不能相同');
 await store.initializeAccessKeys(adminPassword);
+await store.initializeSyncSlots();
 if (store.getState().accessKeys.some(item => safeEqual(item.secret, superPassword))) throw new Error('登录密钥与超级管理员密码不能相同');
 const managers = new Map();
 let operationQueue = Promise.resolve();
@@ -32,7 +33,10 @@ function exclusive(operation) {
 }
 function getManager(id) {
   if (!managers.has(id)) {
-    const manager = new KeyManager({ store: store.scopedStore(id), upstream });
+    const manager = new KeyManager({ store: store.scopedStore(id), upstream, scheduleOffset: () => {
+      const entries = store.getState().accessKeys.slice().sort((a,b) => a.syncSlot-b.syncSlot);
+      return Math.floor(entries.findIndex(entry => entry.id === id)*60/Math.max(6,entries.length));
+    } });
     // All scopes and credential changes share one queue to avoid lost updates.
     manager.exclusive = exclusive;
     managers.set(id, manager);
@@ -178,6 +182,7 @@ async function handleApi(request, response, url) {
         entry.state.budget.type=type;
         if(type==='trial'){entry.state.budget.trialStartedAt=new Date().toISOString();entry.state.budget.accountingFrom=entry.state.budget.trialStartedAt;}
         next.accessKeys.push(entry);
+        entry.syncSlot = Math.max(-1, ...next.accessKeys.filter(item => item !== entry).map(item => item.syncSlot ?? -1)) + 1;
         next.accessOrderVersion=(next.accessOrderVersion||0)+1;
         await store.saveState(next);
         return entry;
@@ -253,7 +258,7 @@ async function handleApi(request, response, url) {
         else {
           // A newly linked key cannot spend a destination reward retroactively.
           const sourceTrack=source.state.budget.tracking?.[hash];
-          const upstreamKey=(await upstream.listAllKeys()).find(item=>hashKey(String(item.key||''))===hash);
+          const upstreamKey=Number.isSafeInteger(key.upstreamId)?await upstream.getKey(key.upstreamId):(await upstream.listAllKeys()).find(item=>hashKey(String(item.key||''))===hash);
           if(!upstreamKey)throw new HttpError('API Key 无法匹配，未转移',409);
           target.state.budget.tracking[hash]={apiKeyId:sourceTrack?.apiKeyId||upstreamKey.id,from:new Date(`${target.state.budget.month}-01T00:00:00+08:00`).toISOString(),windows:[{from:transferredAt}]};
         }
@@ -293,6 +298,7 @@ async function handleApi(request, response, url) {
     return sendJson(response,200,{ ...manager.view(), accessKeys, pendingSync });
   }
   if (method === 'GET' && url.pathname === '/api/keys') return sendJson(response,200,manager.view());
+  if (method === 'GET' && url.pathname === '/api/sync-status') return sendJson(response,200,manager.syncView());
   if (method === 'POST' && url.pathname === '/api/refresh') return sendJson(response,200,await manager.refresh());
   if ((method === 'POST' && url.pathname === '/api/keys') ||
       (method === 'DELETE' && url.pathname.startsWith('/api/keys/')) ||

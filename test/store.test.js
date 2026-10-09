@@ -4,6 +4,29 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
+test('sync slots and isolated failure history survive reordering and a disk reload',async()=>{
+  const directory=await fs.mkdtemp(path.join(os.tmpdir(),'sync-store-'));
+  const prior=process.env.DATA_DIR;process.env.DATA_DIR=directory;
+  try{
+    const store=await import(`../src/store.js?sync=${Date.now()}`);
+    await store.loadStore();await store.initializeAccessKeys('demo-one');
+    const snapshot=store.getState();
+    snapshot.accessKeys.push({id:'second',secret:'demo-two',previousSecrets:[],ownedHashes:[],state:structuredClone(store.initialState)});
+    await store.saveState(snapshot);await store.initializeSyncSlots();
+    const before=store.getState();assert.deepEqual(before.accessKeys.map(entry=>entry.syncSlot),[0,1]);
+    const scoped=store.scopedStore(before.accessKeys[0].id),state=scoped.getState();
+    state.cache.syncEvents=[{kind:'failed',at:'2026-10-09T01:00:00Z',message:'上游连接或请求超时',code:'UND_ERR_CONNECT_TIMEOUT',stage:'usage-read',keyId:'demo'}];
+    await scoped.saveState(state);
+    const reordered=store.getState();reordered.accessKeys.reverse();await store.saveState(reordered);await store.initializeSyncSlots();
+    const reloaded=await import(`../src/store.js?sync-reload=${Date.now()}`);await reloaded.loadStore();
+    assert.deepEqual(reloaded.getState().accessKeys.map(entry=>entry.syncSlot),[1,0]);
+    assert.equal(reloaded.scopedStore(before.accessKeys[0].id).getState().cache.syncEvents.length,1);
+    assert.equal(reloaded.scopedStore('second').getState().cache.syncEvents,undefined);
+    const invalid=reloaded.getState();invalid.accessKeys[0].state.cache.syncEvents=[{kind:'failed',at:'invalid',message:'bad'}];
+    await assert.rejects(reloaded.saveState(invalid),/同步记录无效/);
+  }finally{if(prior===undefined)delete process.env.DATA_DIR;else process.env.DATA_DIR=prior;await fs.rm(directory,{recursive:true,force:true});}
+});
+
 test('announcement records validate, survive restart and stay intact during scoped budget writes', async () => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sub2api-announcement-store-'));
   const previousDirectory = process.env.DATA_DIR;
