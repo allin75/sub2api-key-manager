@@ -31,6 +31,8 @@ Keep UI state in `public/app.js`; render dynamic text with `escapeHtml`. Use sco
 
 Use concise UI headings. Avoid duplicate eyebrow titles and helper text that only explains an obvious feature.
 
+Keep desktop usage previews facing outward: left-column cards open to the left, right-column cards to the right. Reserve both outer gutters by narrowing the centered Key grid when space is limited; never flip inward or cover another card. Verify the original 1920px layout as well as narrower browser windows and system scaling.
+
 ## Testing Guidelines
 
 Add focused tests for new behavior. Budget changes should cover boundary values, cross-month behavior, retry paths, and key status ownership. Use mock Sub2API behavior in `test/http.test.js` and `test/budget.test.js`; never point tests at the production account or disable real keys.

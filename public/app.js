@@ -673,6 +673,7 @@ function renderKeys() {
   if(state.budget?.type==='trial')elements.keyGrid.querySelectorAll('.quota-caption').forEach(el=>el.textContent='USD · 体验额度不参与每周重置；此处为上游 Key 的真实已用量');
   else if(!state.budget?.weeklyResetEnabled)elements.keyGrid.querySelectorAll('.quota-caption').forEach(el=>el.textContent='USD · 周刷新已关闭，累计用量不自动重置');
   mountSort(elements.keyGrid,state.keys.map(k=>k.id),'keys');
+  updateUsageLayout();
   mountUsagePreview();
 }
 
@@ -914,15 +915,28 @@ function scheduleUsageClose() {
   if (!usagePreview.pinned) usagePreview.closeTimer = setTimeout(closeUsagePreview, 200);
 }
 
+function usagePreviewLayout(viewportWidth, readingWidth, twoColumns, desktop=viewportWidth>680) {
+  if (!desktop) return { gridWidth:null, previewWidth:readingWidth };
+  const minimumGrid = twoColumns ? 640 : 360;
+  const previewWidth = Math.min(readingWidth, Math.max(180, (viewportWidth - minimumGrid - 24) / 2));
+  return { gridWidth:Math.max(1, viewportWidth - 2 * (previewWidth + 12)), previewWidth };
+}
+
+function updateUsageLayout() {
+  const twoColumns = getComputedStyle(elements.keyGrid).gridTemplateColumns.split(' ').length > 1;
+  const readingWidth = 21.25 * parseFloat(getComputedStyle(document.documentElement).fontSize);
+  const layout = usagePreviewLayout(document.body.clientWidth, readingWidth, twoColumns, innerWidth>680);
+  elements.keyGrid.style.maxWidth = layout.gridWidth === null ? '' : `${layout.gridWidth}px`;
+  return { ...layout, twoColumns };
+}
+
 function usagePreviewPlacement(box, grid, viewportWidth, twoColumns, preferredWidth = 340) {
   if (viewportWidth <= 680) return { side: 'bottom', width: box.width, left: box.left };
   const width = Math.min(preferredWidth, viewportWidth - 24);
   const leftColumn = box.left + box.width / 2 < grid.left + grid.width / 2;
-  const outward = twoColumns && leftColumn ? 'left' : 'right';
-  const opposite = outward === 'left' ? 'right' : 'left';
+  const side = twoColumns && leftColumn ? 'left' : 'right';
   const available = { left: box.left - 12, right: viewportWidth - box.right - 12 };
-  // Keep desktop previews beside their card, using the inner side when gutters are narrow.
-  const side = available[outward] >= width || available[outward] >= available[opposite] ? outward : opposite;
+  // The centered grid reserves both gutters; never reverse a column's outward direction.
   const drawerWidth = Math.min(width, Math.max(1, available[side]));
   return { side, left: side === 'left' ? box.left - drawerWidth : box.right, width: drawerWidth };
 }
@@ -940,13 +954,13 @@ function usagePreviewSidePosition(box, side, viewportWidth, viewportHeight, pref
 }
 
 function positionUsagePreview() {
+  const layout = updateUsageLayout();
   const card = usageCard();
   if (!card || !usagePreview.id) return;
   const box = card.getBoundingClientRect();
   const grid = elements.keyGrid.getBoundingClientRect();
-  const twoColumns = getComputedStyle(elements.keyGrid).gridTemplateColumns.split(' ').length > 1;
-  const readingWidth = 21.25 * parseFloat(getComputedStyle(document.documentElement).fontSize);
-  const preferredWidth = !twoColumns && innerWidth > 680 ? Math.min(readingWidth, innerWidth * .42) : readingWidth;
+  const twoColumns = layout.twoColumns;
+  const preferredWidth = layout.previewWidth;
   const placement = usagePreviewPlacement(box, grid, innerWidth, twoColumns, preferredWidth);
   if (placement.side !== 'bottom' && (box.bottom < 24 || box.top > innerHeight - 24)) { closeUsagePreview(); return; }
   const sidePosition = placement.side === 'bottom' ? null : usagePreviewSidePosition(box, placement.side, innerWidth, innerHeight, placement.width);
@@ -1134,4 +1148,5 @@ document.addEventListener('keydown', event => {
 window.addEventListener('resize', positionUsagePreview);
 window.addEventListener('scroll', positionUsagePreview, { capture: true, passive: true });
 
+updateUsageLayout();
 boot();

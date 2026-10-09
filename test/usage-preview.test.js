@@ -6,7 +6,7 @@ import vm from 'node:vm';
 const source = await fs.readFile(new URL('../public/app.js', import.meta.url), 'utf8');
 const styles = await fs.readFile(new URL('../public/overrides.css', import.meta.url), 'utf8');
 const context = vm.createContext({});
-vm.runInContext(source.slice(source.indexOf('function usagePreviewPlacement('), source.indexOf('function positionUsagePreview(')), context);
+vm.runInContext(source.slice(source.indexOf('function usagePreviewLayout('), source.indexOf('function positionUsagePreview(')), context);
 vm.runInContext(source.slice(source.indexOf('function budgetNoticeKey('), source.indexOf('function checkBudgetNotification(')), context);
 
 const grid = { left: 355, width: 1196 };
@@ -24,16 +24,13 @@ test('seven-day preview attaches to the outer side of both cards at 1920px', () 
   assert.equal(right.width, 340);
 });
 
-test('desktop previews turn inward when outer gutters are unavailable while phones stay below', () => {
-  const left = context.usagePreviewPlacement({ left:22,right:612,width:590 }, { left:22,width:1196 }, 1240, true);
-  const right = context.usagePreviewPlacement({ left:627,right:1218,width:591 }, { left:22,width:1196 }, 1240, true);
-  const mobile = context.usagePreviewPlacement({ left: 14, right: 376, width: 362 }, { left: 14, width: 362 }, 390, false);
-  assert.equal(left.side, 'right');
-  assert.equal(left.left,612);
-  assert.equal(right.side,'left');
-  assert.equal(right.left,287);
-  assert.equal(mobile.side, 'bottom');
-  assert.equal(mobile.width, 362);
+test('desktop column directions never reverse while phones stay below', () => {
+  const left = context.usagePreviewPlacement({ left:352,right:748,width:396 }, { left:352,width:808 }, 1512, true);
+  const right = context.usagePreviewPlacement({ left:763,right:1160,width:397 }, { left:352,width:808 }, 1512, true);
+  const mobile = context.usagePreviewPlacement({ left:14,right:376,width:362 }, { left:14,width:362 }, 390, false);
+  assert.equal(left.side,'left');assert.equal(left.left,12);
+  assert.equal(right.side,'right');assert.equal(right.left,1160);
+  assert.equal(mobile.side,'bottom');assert.equal(mobile.width,362);
 });
 
 test('large-screen previews fit both outer gutters at their scaled reading width', () => {
@@ -54,36 +51,39 @@ test('large-screen previews fit both outer gutters at their scaled reading width
   }
 });
 
-test('scaled previews turn inward at insufficient outer space and keep detached gaps', () => {
+test('scaled previews keep their outer side and detached gaps', () => {
   const card = { left: 420, right: 1200, top: 800, width: 780, height: 500 };
-  assert.equal(context.usagePreviewPlacement(card, { left: 420, width: 1720 }, 2560, true, 425).side, 'right');
+  assert.equal(context.usagePreviewPlacement(card, { left: 420, width: 1720 }, 2560, true, 425).side, 'left');
   const shifted = context.usagePreviewSidePosition({ ...card, left: 440 }, 'left', 2560, 1000, 425);
   assert.equal(shifted.detached, true);
   assert.equal(shifted.width, 412);
   assert.equal(shifted.left + shifted.width + shifted.gap, 440);
 });
 
-test('desktop window widths and zoom-equivalent viewports always produce bounded side previews',()=>{
+test('centered card area reserves both outer gutters across desktop windows and zoom',()=>{
   for(const viewport of [901,1024,1240,1280,1440,1512,1707,1760,1920,2048,2560,3072,3840]){
-    const shell=Math.min(1240,viewport),left=(viewport-shell)/2+22,right=viewport-left;
-    const grid={left,width:right-left};
-    for(const card of [{left,right:viewport/2-8,width:viewport/2-8-left},{left:viewport/2+8,right,width:right-viewport/2-8}]){
-      const placement=context.usagePreviewPlacement(card,grid,viewport,true,340);
-      assert.ok(['left','right'].includes(placement.side));
-      assert.ok(placement.left>=12&&placement.left+placement.width<=viewport-12);
-      assert.ok(placement.width>250);
-    }
+    const reading=viewport<=1920?340:viewport<=2560?21.25*(4+viewport*.00625):21.25*(12+viewport*.003125);
+    const layout=context.usagePreviewLayout(viewport,reading,true);
+    const gridWidth=Math.min(1196,layout.gridWidth),left=(viewport-gridWidth)/2,right=viewport-left;
+    const grid={left,width:gridWidth};
+    const cards=[{left,right:viewport/2-8,width:viewport/2-8-left},{left:viewport/2+8,right,width:right-viewport/2-8}];
+    cards.forEach((card,index)=>{
+      const placement=context.usagePreviewPlacement(card,grid,viewport,true,layout.previewWidth);
+      assert.equal(placement.side,index===0?'left':'right');
+      assert.ok(placement.left>=11.99&&placement.left+placement.width<=viewport-11.99);
+      assert.equal(placement.width,layout.previewWidth);
+    });
   }
 });
 
-test('a narrow desktop column reserves room for a side preview instead of moving it below',()=>{
-  for(const viewport of [681,768,900]){
-    const width=Math.min(340,viewport*.42);
-    const card={left:22,right:viewport-22-width,width:viewport-44-width};
-    const placement=context.usagePreviewPlacement(card,{left:22,width:viewport-44},viewport,false,width);
-    assert.equal(placement.side,'right');assert.equal(placement.width,width);
-    assert.ok(placement.left+placement.width<=viewport-12);
-  }
+test('1080p retains the original card width while smaller windows shrink the centered grid',()=>{
+  const normal=context.usagePreviewLayout(1905,340,true);
+  assert.ok(normal.gridWidth>=1196);assert.equal(normal.previewWidth,340);
+  const narrow=context.usagePreviewLayout(1497,340,true);
+  assert.equal(narrow.gridWidth,793);assert.equal(narrow.previewWidth,340);
+  assert.equal((1497-narrow.gridWidth)/2-narrow.previewWidth,12);
+  assert.equal(context.usagePreviewLayout(390,340,false).gridWidth,null);
+  assert.equal(context.usagePreviewLayout(666,340,false,true).gridWidth,282);
 });
 
 test('a vertically shifted preview leaves a gap and points only to its source card', () => {
