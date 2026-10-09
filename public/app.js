@@ -915,12 +915,16 @@ function scheduleUsageClose() {
 }
 
 function usagePreviewPlacement(box, grid, viewportWidth, twoColumns, preferredWidth = 340) {
+  if (viewportWidth <= 680) return { side: 'bottom', width: box.width, left: box.left };
   const width = Math.min(preferredWidth, viewportWidth - 24);
   const leftColumn = box.left + box.width / 2 < grid.left + grid.width / 2;
-  const side = leftColumn ? 'left' : 'right';
-  const left = leftColumn ? box.left - width : box.right;
-  if (twoColumns && left >= 12 && left + width <= viewportWidth - 12) return { side, left, width };
-  return { side: 'bottom', width: box.width, left: box.left };
+  const outward = twoColumns && leftColumn ? 'left' : 'right';
+  const opposite = outward === 'left' ? 'right' : 'left';
+  const available = { left: box.left - 12, right: viewportWidth - box.right - 12 };
+  // Keep desktop previews beside their card, using the inner side when gutters are narrow.
+  const side = available[outward] >= width || available[outward] >= available[opposite] ? outward : opposite;
+  const drawerWidth = Math.min(width, Math.max(1, available[side]));
+  return { side, left: side === 'left' ? box.left - drawerWidth : box.right, width: drawerWidth };
 }
 
 function usagePreviewSidePosition(box, side, viewportWidth, viewportHeight, preferredWidth = 340) {
@@ -941,10 +945,11 @@ function positionUsagePreview() {
   const box = card.getBoundingClientRect();
   const grid = elements.keyGrid.getBoundingClientRect();
   const twoColumns = getComputedStyle(elements.keyGrid).gridTemplateColumns.split(' ').length > 1;
-  const preferredWidth = 21.25 * parseFloat(getComputedStyle(document.documentElement).fontSize);
+  const readingWidth = 21.25 * parseFloat(getComputedStyle(document.documentElement).fontSize);
+  const preferredWidth = !twoColumns && innerWidth > 680 ? Math.min(readingWidth, innerWidth * .42) : readingWidth;
   const placement = usagePreviewPlacement(box, grid, innerWidth, twoColumns, preferredWidth);
   if (placement.side !== 'bottom' && (box.bottom < 24 || box.top > innerHeight - 24)) { closeUsagePreview(); return; }
-  const sidePosition = placement.side === 'bottom' ? null : usagePreviewSidePosition(box, placement.side, innerWidth, innerHeight, preferredWidth);
+  const sidePosition = placement.side === 'bottom' ? null : usagePreviewSidePosition(box, placement.side, innerWidth, innerHeight, placement.width);
   const focused = usagePopover.contains(document.activeElement) ? document.activeElement : null;
   const previousSide = usagePopover.dataset.side;
   const layoutChanged = previousSide !== placement.side || (placement.side === 'bottom' && usagePopover.parentElement !== usagePreviewSlot);
