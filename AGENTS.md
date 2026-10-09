@@ -31,7 +31,7 @@ Keep UI state in `public/app.js`; render dynamic text with `escapeHtml`. Use sco
 
 Use concise UI headings. Avoid duplicate eyebrow titles and helper text that only explains an obvious feature.
 
-Keep the original usage preview rules: left-column cards open left and right-column cards open right when the outer gutter fits; otherwise open below as a floating layer. Do not shrink the central cards or insert grid rows/spacers. Opening, switching and closing previews must preserve every card's position and must not automatically scroll the page.
+Keep the original usage preview rules: left-column cards open left and right-column cards open right when the outer gutter fits; otherwise use a floating layer below, or above when below does not fit. Prefer positioning that keeps both the source card and details visible, limiting panel height with internal scrolling when needed. Do not shrink the central cards or insert grid rows/spacers. Opening, switching and closing previews must preserve every card's position and must not automatically scroll the page.
 
 ## Testing Guidelines
 

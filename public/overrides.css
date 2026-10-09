@@ -285,6 +285,7 @@ html { scrollbar-gutter:stable; }
 .key-card.usage-preview-left:not(.usage-preview-detached) { border-top-left-radius:0; border-bottom-left-radius:0; }
 .key-card.usage-preview-right:not(.usage-preview-detached) { border-top-right-radius:0; border-bottom-right-radius:0; }
 .key-card.usage-preview-bottom:not(.usage-preview-detached) { border-bottom-left-radius:0; border-bottom-right-radius:0; }
+.key-card.usage-preview-top:not(.usage-preview-detached) { border-top-left-radius:0; border-top-right-radius:0; }
 .usage-connector {
   position:fixed; z-index:8; height:2px; background:#739dff; box-shadow:0 0 0.625rem #739dff88;
   opacity:0; transform:scaleX(0); transition:opacity 180ms ease,transform 240ms ease; pointer-events:none;
@@ -308,7 +309,9 @@ html { scrollbar-gutter:stable; }
 .usage-popover[data-side="left"][data-detached="false"] { border-right:0; border-top-right-radius:0; border-bottom-right-radius:0; }
 .usage-popover[data-side="right"][data-detached="false"] { border-left:0; border-top-left-radius:0; border-bottom-left-radius:0; }
 .usage-popover[data-side="bottom"] { flex:none; clip-path:inset(0 0 100% 0); }
+.usage-popover[data-side="top"] { flex:none; clip-path:inset(100% 0 0 0); }
 .usage-popover[data-side="bottom"][data-detached="false"] { border-top:0; border-top-left-radius:0; border-top-right-radius:0; }
+.usage-popover[data-side="top"][data-detached="false"] { border-bottom:0; border-bottom-left-radius:0; border-bottom-right-radius:0; }
 .usage-popover.usage-popover-visible { opacity:1; clip-path:inset(0 0 0 0); pointer-events:auto; }
 .usage-popover-head { display:flex; align-items:flex-start; justify-content:space-between; gap:1rem; }
 .usage-popover-head > div { min-width:0; }
@@ -335,7 +338,7 @@ html { scrollbar-gutter:stable; }
 .usage-chart-empty { margin:auto 0; padding:1.5625rem 0; text-align:center; line-height:1.9; font-size:0.8125rem; color:var(--muted); }
 .usage-chart-empty small { font-size:0.6875rem; }
 @media(max-width:680px) {
-  .usage-popover[data-side="bottom"] { padding:1.125rem 1rem; }
+  .usage-popover[data-side="bottom"],.usage-popover[data-side="top"] { padding:1.125rem 1rem; }
   .usage-popover h3 { font-size:1rem; }
   .usage-chart-total strong { font-size:1.75rem; }
   .usage-chart { flex-basis:11.25rem; min-height:11.25rem; }

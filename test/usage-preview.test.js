@@ -61,16 +61,30 @@ test('scaled previews fall back below when their outer side is too narrow', () =
 });
 
 test('a floating bottom preview attaches below when the viewport has enough room',()=>{
-  const position=context.usagePreviewBottomPosition({left:760,width:590,bottom:480},1512,1000,340);
+  const position=context.usagePreviewVerticalPosition({left:760,width:590,top:180,bottom:480},1512,1000,340);
   assert.equal(position.left,760);assert.equal(position.top,480);assert.equal(position.width,590);
-  assert.equal(position.height,340);assert.equal(position.detached,false);
+  assert.equal(position.height,340);assert.equal(position.detached,false);assert.equal(position.side,'bottom');
 });
 
-test('a floating bottom preview stays visible in short and narrow viewports',()=>{
-  const shifted=context.usagePreviewBottomPosition({left:760,width:590,bottom:700},1512,812,340);
-  assert.equal(shifted.top,460);assert.equal(shifted.detached,true);
-  const narrow=context.usagePreviewBottomPosition({left:30,width:500,bottom:200},390,320,600);
-  assert.equal(narrow.left,12);assert.equal(narrow.width,366);assert.equal(narrow.height,296);assert.equal(narrow.top,12);
+test('a vertical preview flips above when below does not fit',()=>{
+  const shifted=context.usagePreviewVerticalPosition({left:760,width:590,top:400,bottom:700},1512,812,340);
+  assert.equal(shifted.top,60);assert.equal(shifted.detached,false);assert.equal(shifted.side,'top');
+  const narrow=context.usagePreviewVerticalPosition({left:30,width:500,top:100,bottom:200},390,320,600);
+  assert.equal(narrow.left,12);assert.equal(narrow.width,366);assert.equal(narrow.height,160);assert.equal(narrow.top,148);assert.equal(narrow.side,'bottom');
+});
+
+test('vertical preview caps to the larger free area instead of covering the source card',()=>{
+  const above=context.usagePreviewVerticalPosition({left:760,width:590,top:400,bottom:780},1512,812,400,100);
+  assert.equal(above.side,'top');assert.equal(above.height,300);assert.equal(above.top+above.height,400);assert.equal(above.detached,false);
+  const below=context.usagePreviewVerticalPosition({left:760,width:590,top:160,bottom:540},1512,812,400,100);
+  assert.equal(below.side,'bottom');assert.equal(below.height,260);assert.equal(below.top,540);assert.equal(below.detached,false);
+});
+
+test('upward reveal starts at the edge attached to the source card',()=>{
+  const clipContext=vm.createContext({});
+  vm.runInContext(source.slice(source.indexOf('function usageClosedClip('),source.indexOf('function animateUsagePreview(')),clipContext);
+  assert.equal(clipContext.usageClosedClip('top'),'inset(100% 0 0 0)');
+  assert.equal(clipContext.usageClosedClip('bottom'),'inset(0 0 100% 0)');
 });
 
 test('a vertically shifted preview leaves a gap and points only to its source card', () => {
