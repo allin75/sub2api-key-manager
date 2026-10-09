@@ -284,7 +284,7 @@ html { scrollbar-gutter:stable; }
 .key-card.usage-preview-pinned { border-color:var(--blue); }
 .key-card.usage-preview-left:not(.usage-preview-detached) { border-top-left-radius:0; border-bottom-left-radius:0; }
 .key-card.usage-preview-right:not(.usage-preview-detached) { border-top-right-radius:0; border-bottom-right-radius:0; }
-.key-card.usage-preview-bottom { border-bottom-left-radius:0; border-bottom-right-radius:0; }
+.key-card.usage-preview-bottom:not(.usage-preview-detached) { border-bottom-left-radius:0; border-bottom-right-radius:0; }
 .usage-connector {
   position:fixed; z-index:8; height:2px; background:#739dff; box-shadow:0 0 0.625rem #739dff88;
   opacity:0; transform:scaleX(0); transition:opacity 180ms ease,transform 240ms ease; pointer-events:none;
@@ -295,11 +295,6 @@ html { scrollbar-gutter:stable; }
 .usage-connector::after { content:''; position:absolute; top:-0.1875rem; width:0.5rem; height:0.5rem; border-radius:50%; background:#9dbbff; box-shadow:0 0 0.5rem #739dff88; }
 .usage-connector[data-side="left"]::after { right:-0.25rem; }
 .usage-connector[data-side="right"]::after { left:-0.25rem; }
-.usage-preview-slot {
-  grid-column:1/-1; display:flex; align-items:flex-start; height:0; min-width:0; margin-top:-0.9375rem; overflow:hidden; scroll-margin-top:0.875rem;
-  transition:height 260ms cubic-bezier(.2,.8,.2,1);
-}
-.usage-preview-slot[data-column="right"] { justify-content:flex-end; }
 .usage-popover {
   position:fixed; z-index:9; display:flex; flex-direction:column; padding:1.25rem; border:1px solid #739dff55; border-radius:0.875rem;
   background:linear-gradient(145deg,#192942f7,#0e182bf7); box-shadow:0 1.25rem 3.75rem #0006,0 2px 0.5rem #0004;
@@ -312,18 +307,9 @@ html { scrollbar-gutter:stable; }
 .usage-popover[data-side="right"] { clip-path:inset(0 100% 0 0); }
 .usage-popover[data-side="left"][data-detached="false"] { border-right:0; border-top-right-radius:0; border-bottom-right-radius:0; }
 .usage-popover[data-side="right"][data-detached="false"] { border-left:0; border-top-left-radius:0; border-bottom-left-radius:0; }
-.usage-popover[data-side="bottom"] { position:relative; flex:none; border-top:0; border-top-left-radius:0; border-top-right-radius:0; clip-path:inset(0 0 100% 0); }
+.usage-popover[data-side="bottom"] { flex:none; clip-path:inset(0 0 100% 0); }
+.usage-popover[data-side="bottom"][data-detached="false"] { border-top:0; border-top-left-radius:0; border-top-right-radius:0; }
 .usage-popover.usage-popover-visible { opacity:1; clip-path:inset(0 0 0 0); pointer-events:auto; }
-.key-grid { margin-inline:auto; }
-.key-card { container-type:inline-size; container-name:usage-card; }
-@media (min-width:681px) {
-  @container usage-card (max-width:380px) {
-    .periods { grid-template-columns:repeat(2,minmax(0,1fr)); }
-    .period:last-child { grid-column:span 2; }
-    .card-head,.card-footer { flex-wrap:wrap; }
-    .key-name { overflow-wrap:anywhere; }
-  }
-}
 .usage-popover-head { display:flex; align-items:flex-start; justify-content:space-between; gap:1rem; }
 .usage-popover-head > div { min-width:0; }
 .usage-eyebrow { font-size:0.625rem; letter-spacing:1px; color:var(--muted); }
@@ -349,7 +335,7 @@ html { scrollbar-gutter:stable; }
 .usage-chart-empty { margin:auto 0; padding:1.5625rem 0; text-align:center; line-height:1.9; font-size:0.8125rem; color:var(--muted); }
 .usage-chart-empty small { font-size:0.6875rem; }
 @media(max-width:680px) {
-  .usage-popover[data-side="bottom"] { min-height:24.375rem; padding:1.125rem 1rem; }
+  .usage-popover[data-side="bottom"] { padding:1.125rem 1rem; }
   .usage-popover h3 { font-size:1rem; }
   .usage-chart-total strong { font-size:1.75rem; }
   .usage-chart { flex-basis:11.25rem; min-height:11.25rem; }
@@ -362,5 +348,5 @@ html { scrollbar-gutter:stable; }
   .usage-chart-footer { font-size:0.6875rem; }
 }
 @media(prefers-reduced-motion:reduce) {
-  .usage-popover,.usage-preview-slot,.usage-connector,.usage-chart-dot,.key-card { transition:none; }
+  .usage-popover,.usage-connector,.usage-chart-dot,.key-card { transition:none; }
 }

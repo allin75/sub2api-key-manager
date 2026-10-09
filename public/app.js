@@ -673,7 +673,6 @@ function renderKeys() {
   if(state.budget?.type==='trial')elements.keyGrid.querySelectorAll('.quota-caption').forEach(el=>el.textContent='USD · 体验额度不参与每周重置；此处为上游 Key 的真实已用量');
   else if(!state.budget?.weeklyResetEnabled)elements.keyGrid.querySelectorAll('.quota-caption').forEach(el=>el.textContent='USD · 周刷新已关闭，累计用量不自动重置');
   mountSort(elements.keyGrid,state.keys.map(k=>k.id),'keys');
-  updateUsageLayout();
   mountUsagePreview();
 }
 
@@ -841,11 +840,9 @@ async function saveOrder(kind,ids){
 }
 
 // One shared preview keeps pinning, timers and chart focus stable between cards.
-const usagePreview = { id: null, pinned: false, openTimer: null, closeTimer: null, hideTimer: null, scrollTimer: null, animation: null, suppressClickUntil: 0 };
+const usagePreview = { id: null, pinned: false, openTimer: null, closeTimer: null, hideTimer: null, animation: null, suppressClickUntil: 0, suppressHoverUntil: 0, bottomWidth: 0, bottomHeight: 0 };
 const usagePopover = document.createElement('section');
-const usagePreviewSlot = document.createElement('div');
 const usageConnector = document.createElement('div');
-usagePreviewSlot.className = 'usage-preview-slot';
 usageConnector.className = 'usage-connector';
 usageConnector.setAttribute('aria-hidden', 'true');
 usageConnector.hidden = true;
@@ -886,7 +883,6 @@ function closeUsagePreview() {
   clearTimeout(usagePreview.openTimer);
   clearTimeout(usagePreview.closeTimer);
   clearTimeout(usagePreview.hideTimer);
-  clearTimeout(usagePreview.scrollTimer);
   const wasVisible = !usagePopover.hidden && usagePreview.id !== null;
   const currentClip = wasVisible ? getComputedStyle(usagePopover).clipPath : null;
   const currentOpacity = wasVisible ? getComputedStyle(usagePopover).opacity : null;
@@ -900,50 +896,35 @@ function closeUsagePreview() {
   else { usagePreview.animation?.cancel(); usagePreview.animation = null; }
   usageConnector.classList.remove('usage-connector-visible');
   usagePopover.inert = true;
-  usagePreviewSlot.style.height = '0px';
   usagePreview.hideTimer = setTimeout(() => {
     usagePopover.hidden = true;
     usageConnector.hidden = true;
-    document.body.append(usagePopover);
-    usagePreviewSlot.remove();
   }, 320);
 }
 
 function scheduleUsageClose() {
   clearTimeout(usagePreview.openTimer);
   clearTimeout(usagePreview.closeTimer);
-  if (!usagePreview.pinned) usagePreview.closeTimer = setTimeout(closeUsagePreview, 200);
+  if (usagePreview.id && !usagePreview.pinned) usagePreview.closeTimer = setTimeout(closeUsagePreview, 200);
 }
 
-function usagePreviewLayout(viewportWidth, readingWidth, twoColumns, desktop=viewportWidth>680) {
-  if (!desktop) return { gridWidth:null, previewWidth:readingWidth };
-  const minimumGrid = twoColumns ? 640 : 360;
-  const previewWidth = Math.min(readingWidth, Math.max(180, (viewportWidth - minimumGrid - 24) / 2));
-  return { gridWidth:Math.max(1, viewportWidth - 2 * (previewWidth + 12)), previewWidth };
-}
-
-function updateUsageLayout() {
-  const twoColumns = getComputedStyle(elements.keyGrid).gridTemplateColumns.split(' ').length > 1;
-  const readingWidth = 21.25 * parseFloat(getComputedStyle(document.documentElement).fontSize);
-  const layout = usagePreviewLayout(document.body.clientWidth, readingWidth, twoColumns, innerWidth>680);
-  elements.keyGrid.style.maxWidth = layout.gridWidth === null ? '' : `${layout.gridWidth}px`;
-  return { ...layout, twoColumns };
+function dismissUsagePreview() {
+  usagePreview.suppressHoverUntil = Date.now() + 400;
+  closeUsagePreview();
 }
 
 function usagePreviewPlacement(box, grid, viewportWidth, twoColumns, preferredWidth = 340) {
-  if (viewportWidth <= 680) return { side: 'bottom', width: box.width, left: box.left };
   const width = Math.min(preferredWidth, viewportWidth - 24);
   const leftColumn = box.left + box.width / 2 < grid.left + grid.width / 2;
-  const side = twoColumns && leftColumn ? 'left' : 'right';
-  const available = { left: box.left - 12, right: viewportWidth - box.right - 12 };
-  // The centered grid reserves both gutters; never reverse a column's outward direction.
-  const drawerWidth = Math.min(width, Math.max(1, available[side]));
-  return { side, left: side === 'left' ? box.left - drawerWidth : box.right, width: drawerWidth };
+  const side = leftColumn ? 'left' : 'right';
+  const left = leftColumn ? box.left - width : box.right;
+  if (twoColumns && left >= 12 && left + width <= viewportWidth - 12) return { side, left, width };
+  return { side:'bottom', left:box.left, width:box.width };
 }
 
-function usagePreviewSidePosition(box, side, viewportWidth, viewportHeight, preferredWidth = 340) {
-  const height = Math.min(box.height, viewportHeight - 24);
-  const top = Math.max(12, Math.min(box.top, viewportHeight - height - 12));
+function usagePreviewSidePosition(box, side, viewportWidth, viewportHeight, preferredWidth = 340, minTop = 12) {
+  const height = Math.min(box.height, Math.max(1,viewportHeight - minTop - 12));
+  const top = Math.max(minTop, Math.min(box.top, viewportHeight - height - 12));
   const detached = Math.abs(top - box.top) > 1;
   const gap = detached ? 16 : 0;
   const available = side === 'left' ? box.left - 12 : viewportWidth - box.right - 12;
@@ -953,46 +934,53 @@ function usagePreviewSidePosition(box, side, viewportWidth, viewportHeight, pref
   return { height, top, left, width, detached, gap, anchorY };
 }
 
+function usagePreviewBottomPosition(box, viewportWidth, viewportHeight, contentHeight, minTop = 12) {
+  const width = Math.min(box.width, viewportWidth - 24);
+  const height = Math.min(contentHeight, Math.max(1, viewportHeight - minTop - 12));
+  const left = Math.max(12, Math.min(box.left, viewportWidth - width - 12));
+  const top = Math.max(minTop, Math.min(box.bottom, viewportHeight - height - 12));
+  return { width, height, left, top, detached:Math.abs(top - box.bottom) > 1 };
+}
+
 function positionUsagePreview() {
-  const layout = updateUsageLayout();
   const card = usageCard();
   if (!card || !usagePreview.id) return;
   const box = card.getBoundingClientRect();
   const grid = elements.keyGrid.getBoundingClientRect();
-  const twoColumns = layout.twoColumns;
-  const preferredWidth = layout.previewWidth;
+  const twoColumns = getComputedStyle(elements.keyGrid).gridTemplateColumns.split(' ').length > 1;
+  const preferredWidth = 21.25 * parseFloat(getComputedStyle(document.documentElement).fontSize);
   const placement = usagePreviewPlacement(box, grid, innerWidth, twoColumns, preferredWidth);
-  if (placement.side !== 'bottom' && (box.bottom < 24 || box.top > innerHeight - 24)) { closeUsagePreview(); return; }
-  const sidePosition = placement.side === 'bottom' ? null : usagePreviewSidePosition(box, placement.side, innerWidth, innerHeight, placement.width);
+  if (box.bottom < 24 || box.top > innerHeight - 24) { closeUsagePreview(); return; }
+  const minTop = Math.max(12,Math.min(innerHeight-24,elements.topbar.getBoundingClientRect().bottom+8));
+  const sidePosition = placement.side === 'bottom' ? null : usagePreviewSidePosition(box, placement.side, innerWidth, innerHeight, placement.width, minTop);
   const focused = usagePopover.contains(document.activeElement) ? document.activeElement : null;
   const previousSide = usagePopover.dataset.side;
-  const layoutChanged = previousSide !== placement.side || (placement.side === 'bottom' && usagePopover.parentElement !== usagePreviewSlot);
+  const layoutChanged = previousSide !== placement.side;
   const restartReveal = layoutChanged && usagePopover.classList.contains('usage-popover-visible');
   card.classList.remove('usage-preview-left', 'usage-preview-right', 'usage-preview-bottom', 'usage-preview-detached');
   card.classList.add(`usage-preview-${placement.side}`);
   card.classList.toggle('usage-preview-detached', !!sidePosition?.detached);
   usagePopover.dataset.side = placement.side;
-  usagePopover.dataset.detached = sidePosition?.detached ? 'true' : 'false';
+  if (sidePosition) usagePopover.dataset.detached = sidePosition.detached ? 'true' : 'false';
   usagePopover.style.width = `${sidePosition?.width ?? placement.width}px`;
   if (placement.side === 'bottom') {
     usageConnector.classList.remove('usage-connector-visible');
     usageConnector.hidden = true;
-    const cards = [...elements.keyGrid.children].filter(child => child !== usagePreviewSlot);
-    const index = cards.indexOf(card);
-    const rowEnd = Math.min(cards.length - 1, Math.floor(index / (twoColumns ? 2 : 1)) * (twoColumns ? 2 : 1) + (twoColumns ? 1 : 0));
-    const next = cards[rowEnd + 1] || null;
-    if (usagePreviewSlot.parentElement !== elements.keyGrid || usagePreviewSlot.nextElementSibling !== next) elements.keyGrid.insertBefore(usagePreviewSlot, next);
-    usagePreviewSlot.dataset.column = twoColumns && placement.left > grid.left + grid.width / 2 ? 'right' : 'left';
-    if (usagePopover.parentElement !== usagePreviewSlot) usagePreviewSlot.append(usagePopover);
-    usagePopover.style.height = '';
-    usagePopover.style.maxHeight = '';
-    usagePopover.style.left = '';
-    usagePopover.style.top = '';
-    if (usagePopover.classList.contains('usage-popover-visible')) usagePreviewSlot.style.height = `${usagePopover.offsetHeight}px`;
+    if (previousSide !== 'bottom' || usagePreview.bottomWidth !== placement.width || !usagePreview.bottomHeight) {
+      usagePopover.style.height = '';
+      usagePopover.style.maxHeight = '';
+      usagePopover.dataset.detached = 'true';
+      usagePreview.bottomWidth = placement.width;
+      usagePreview.bottomHeight = usagePopover.offsetHeight;
+    }
+    const bottom = usagePreviewBottomPosition(box, innerWidth, innerHeight, usagePreview.bottomHeight, minTop);
+    usagePopover.dataset.detached = bottom.detached ? 'true' : 'false';
+    card.classList.toggle('usage-preview-detached',bottom.detached);
+    usagePopover.style.height = `${bottom.height}px`;
+    usagePopover.style.maxHeight = `${innerHeight - 24}px`;
+    usagePopover.style.left = `${bottom.left}px`;
+    usagePopover.style.top = `${bottom.top}px`;
   } else {
-    if (usagePopover.parentElement !== document.body) document.body.append(usagePopover);
-    usagePreviewSlot.remove();
-    usagePreviewSlot.style.height = '0px';
     usagePopover.style.height = `${sidePosition.height}px`;
     usagePopover.style.maxHeight = `${innerHeight - 24}px`;
     usagePopover.style.left = `${sidePosition.left}px`;
@@ -1015,7 +1003,6 @@ function positionUsagePreview() {
   if (focused && !usagePopover.contains(document.activeElement)) focused.focus({ preventScroll: true });
   if (restartReveal) {
     animateUsagePreview(true);
-    if (placement.side === 'bottom') usagePreviewSlot.style.height = `${usagePopover.offsetHeight}px`;
   }
 }
 
@@ -1053,7 +1040,6 @@ function openUsagePreview(card, pinned = false, refresh = false) {
   clearTimeout(usagePreview.openTimer);
   clearTimeout(usagePreview.closeTimer);
   clearTimeout(usagePreview.hideTimer);
-  clearTimeout(usagePreview.scrollTimer);
   const changed = usagePreview.id !== key.id;
   if (changed) {
     usagePreview.animation?.cancel();
@@ -1063,13 +1049,13 @@ function openUsagePreview(card, pinned = false, refresh = false) {
     usagePopover.classList.remove('usage-popover-visible');
     usageConnector.classList.remove('usage-connector-visible');
     usageConnector.hidden = true;
-    usagePreviewSlot.style.height = '0px';
   }
   usagePreview.id = key.id;
   usagePreview.pinned = pinned;
   if (changed || refresh) {
+    usagePreview.bottomHeight = 0;
     usagePopover.innerHTML = renderUsageChart(key);
-    usagePopover.querySelector('.usage-preview-close').addEventListener('click', () => { closeUsagePreview(); card.focus({ preventScroll: true }); });
+    usagePopover.querySelector('.usage-preview-close').addEventListener('click', () => { dismissUsagePreview(); card.focus({ preventScroll: true }); });
     usagePopover.querySelectorAll('[data-day]').forEach(point => {
       const showDay = () => {
         const day = key.usage.daily[Number(point.dataset.day)];
@@ -1090,12 +1076,6 @@ function openUsagePreview(card, pinned = false, refresh = false) {
   if (!usagePreview.id) return;
   usagePopover.classList.add('usage-popover-visible');
   if (changed) animateUsagePreview(true);
-  if (usagePopover.dataset.side === 'bottom') usagePreviewSlot.style.height = `${usagePopover.offsetHeight}px`;
-  if (changed && pinned && usagePopover.dataset.side === 'bottom' && matchMedia('(max-width: 680px)').matches) {
-    usagePreview.scrollTimer = setTimeout(() => {
-      if (usagePreview.id === key.id && usagePreview.pinned) usagePreviewSlot.scrollIntoView({ block: 'start', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
-    }, 320);
-  }
 }
 
 function mountUsagePreview() {
@@ -1107,7 +1087,7 @@ function mountUsagePreview() {
     card.setAttribute('aria-controls', 'usagePopover');
     card.setAttribute('aria-expanded', 'false');
     card.addEventListener('pointerenter', event => {
-      if (event.pointerType !== 'mouse' || usagePreview.pinned) return;
+      if (event.pointerType !== 'mouse' || usagePreview.pinned || Date.now() < usagePreview.suppressHoverUntil) return;
       clearTimeout(usagePreview.closeTimer);
       clearTimeout(usagePreview.openTimer);
       usagePreview.openTimer = setTimeout(() => openUsagePreview(card), 180);
@@ -1141,12 +1121,11 @@ document.addEventListener('keydown', event => {
   if (event.key === 'Escape' && usagePreview.id) {
     const card = usageCard();
     const restore = usagePopover.contains(document.activeElement);
-    closeUsagePreview();
+    dismissUsagePreview();
     if (restore) card?.focus({ preventScroll: true });
   }
 });
 window.addEventListener('resize', positionUsagePreview);
 window.addEventListener('scroll', positionUsagePreview, { capture: true, passive: true });
 
-updateUsageLayout();
 boot();

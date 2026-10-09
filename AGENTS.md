@@ -31,7 +31,7 @@ Keep UI state in `public/app.js`; render dynamic text with `escapeHtml`. Use sco
 
 Use concise UI headings. Avoid duplicate eyebrow titles and helper text that only explains an obvious feature.
 
-Keep desktop usage previews facing outward: left-column cards open to the left, right-column cards to the right. Reserve both outer gutters by narrowing the centered Key grid when space is limited; never flip inward or cover another card. Verify the original 1920px layout as well as narrower browser windows and system scaling.
+Keep the original usage preview rules: left-column cards open left and right-column cards open right when the outer gutter fits; otherwise open below as a floating layer. Do not shrink the central cards or insert grid rows/spacers. Opening, switching and closing previews must preserve every card's position and must not automatically scroll the page.
 
 ## Testing Guidelines
 
