@@ -14,8 +14,33 @@ test('dateRanges returns calendar periods', () => {
   assert.deepEqual(ranges.yesterday, ['2026-08-26', '2026-08-26']);
   assert.deepEqual(ranges.today, ['2026-08-27', '2026-08-27']);
   assert.deepEqual(ranges.week, ['2026-08-24', '2026-08-27']);
+  assert.deepEqual(ranges.lastWeek, ['2026-08-17', '2026-08-23']);
   assert.deepEqual(ranges.month, ['2026-08-01', '2026-08-27']);
   assert.deepEqual(ranges.lastMonth, ['2026-07-01', '2026-07-31']);
+});
+
+test('last week uses Beijing calendar boundaries across Sunday, Monday, months and years', () => {
+  for (const [instant, expected] of [
+    ['2026-10-11T15:59:59Z', ['2026-09-28', '2026-10-04']],
+    ['2026-10-11T16:00:00Z', ['2026-10-05', '2026-10-11']],
+    ['2026-01-01T04:00:00Z', ['2025-12-22', '2025-12-28']],
+    ['2024-03-04T04:00:00Z', ['2024-02-26', '2024-03-03']]
+  ]) {
+    assert.deepEqual(dateRanges(new Date(instant)).lastWeek, expected);
+  }
+});
+
+test('last week includes both endpoints and excludes adjacent days from costs and requests', () => {
+  const ranges = dateRanges(new Date('2026-10-11T16:00:00Z'));
+  const usage = aggregateDailyUsage([
+    { date: '2026-10-04', actual_cost: 100, requests: 100 },
+    { date: '2026-10-05', actual_cost: '1.25', requests: 2 },
+    { date: '2026-10-11', actual_cost: 2.75, requests: 3 },
+    { date: '2026-10-12', actual_cost: 50, requests: 10 }
+  ], ranges);
+  assert.deepEqual(usage.lastWeek, { cost: 4, requests: 5 });
+  assert.deepEqual(usage.week, { cost: 50, requests: 10 });
+  assert.deepEqual(aggregateDailyUsage([], ranges).lastWeek, { cost: 0, requests: 0 });
 });
 
 test('aggregateDailyUsage sums costs and requests', () => {

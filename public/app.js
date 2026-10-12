@@ -1,5 +1,6 @@
 const state = { csrfToken: '', keys: [], schedule: null, budget:null, role:'admin', accessKey:null, accessKeys:[], selectedAccessId:'', loadVersion:0, rewards:[], keyOrderVersion:0, accessOrderVersion:0, sorting:false, policySaving:false, announcement:null };
 const budgetNotified = new Set();
+const usagePeriods = [['today', '今日'], ['yesterday', '昨日'], ['week', '本周'], ['lastWeek', '上周'], ['month', '本月'], ['lastMonth', '上月']];
 const elements = Object.fromEntries(['loginScreen','loginForm','loginError','password','app','logoutButton','refreshButton','resetCountdown','openAddButton','usageSummary','keyGrid','addOverlay','addForm','customKey','addError','closeAddButton','cancelAddButton','quotaOverlay','quotaForm','quotaInput','quotaError','quotaDescription','closeQuotaButton','cancelQuotaButton','toast'].map(id => [id, document.getElementById(id)]));
 
 for(const id of ['roleLabel','budgetStatus','syncStatus','budgetOverlay','budgetForm','budgetInput','budgetError','closeBudgetButton','cancelBudgetButton','saveBudgetButton']) elements[id]=document.getElementById(id);
@@ -657,10 +658,9 @@ async function saveAccess(event){
 
 function renderKeys() {
   if(!state.keys.length){closeUsagePreview();elements.keyGrid.innerHTML='<div class="empty"><strong>尚未配置自定义 Key</strong><br>请由超级管理员添加 Key。</div>';return;}
-  const labels=[['yesterday','昨日'],['today','今日'],['week','本周'],['month','本月'],['lastMonth','上月']];
   elements.keyGrid.innerHTML=state.keys.map((key,index)=>{
     if(!key.matched) return `<article class="key-card"><div class="card-head"><div class="key-title"><div class="key-number">${pad(index+1)}</div><div><div class="key-name">未匹配 Key</div><div class="key-value">${escapeHtml(key.maskedKey)}</div></div></div><span class="status missing">未找到</span></div><div class="card-error">${escapeHtml(key.error||'无法匹配')}</div><div class="card-footer"><span>不会参与重置</span><button class="remove" data-remove="${key.id}">移除</button></div></article>`;
-    const periods=labels.map(([id,label])=>`<div class="period"><span>${label}</span><strong>${money(key.usage?.[id]?.cost)}</strong></div>`).join('');
+    const periods=usagePeriods.map(([id,label])=>`<div class="period"><span>${label}</span><strong>${key.usage?.[id]?money(key.usage[id].cost):'—'}</strong></div>`).join('');
     return `<article class="key-card"><div class="card-head"><div class="key-title"><div class="key-number">${pad(index+1)}</div><div><div class="key-name">${escapeHtml(key.name)}</div><div class="key-value">${escapeHtml(key.maskedKey)}</div></div></div><span class="status ${key.status==='active'?'active':'missing'}">${key.status==='active'?'正常':escapeHtml(key.status||'未知')}</span></div><div class="periods">${periods}</div>${renderQuota(key)}${key.error?`<div class="card-error">用量读取失败：${escapeHtml(key.error)}</div>`:''}<div class="card-footer"><span>最后使用：${formatTime(key.lastUsedAt)}</span><button class="remove" data-remove="${key.id}">移除</button></div></article>`;
   }).join('');
   document.querySelectorAll('[data-remove]').forEach(button=>button.addEventListener('click',()=>removeKey(button.dataset.remove)));
@@ -689,12 +689,11 @@ function renderSummary(){
   const matched=state.keys.filter(key=>key.matched);
   const totals=matched.reduce((sum,key)=>{
     sum.total+=Number(key.quotaUsed||0);
-    for(const period of ['yesterday','today','week','month','lastMonth']) sum[period]+=Number(key.usage?.[period]?.cost||0);
+    for(const [period] of usagePeriods) sum[period]+=Number(key.usage?.[period]?.cost||0);
     return sum;
-  },{total:0,yesterday:0,today:0,week:0,month:0,lastMonth:0});
+  },{total:0,today:0,yesterday:0,week:0,lastWeek:0,month:0,lastMonth:0});
   const b=state.budget;
-  const items=[['yesterday','昨日'],['today','今日'],['week','本周'],['month','本月'],['lastMonth','上月']];
-  elements.usageSummary.innerHTML=`<div class="summary-item balance-item"><div class="balance-heading"><span>余额</span>${state.role==='superadmin'?'<button class="quota-edit" id="editBudget">设置</button>':''}</div><div class="balance-value"><strong>${b?.limit==null?'未设置':b.balance===null?'待同步':money(b.balance)}</strong>${b?.limit!=null?`<span>/ ${money(b.limit)}</span>`:''}</div></div>`+items.map(([id,label])=>`<div class="summary-item"><span>${label}</span><strong>${state.keys.some(k=>!k.usage)?'—':money(totals[id])}</strong></div>`).join('');
+  elements.usageSummary.innerHTML=`<div class="summary-item balance-item"><div class="balance-heading"><span>余额</span>${state.role==='superadmin'?'<button class="quota-edit" id="editBudget">设置</button>':''}</div><div class="balance-value"><strong>${b?.limit==null?'未设置':b.balance===null?'待同步':money(b.balance)}</strong>${b?.limit!=null?`<span>/ ${money(b.limit)}</span>`:''}</div></div>`+usagePeriods.map(([id,label])=>`<div class="summary-item"><span>${label}</span><strong>${state.keys.some(k=>!k.usage?.[id])?'—':money(totals[id])}</strong></div>`).join('');
   const label=b?.type==='trial'?'体验总额度':'月度总额度';
   document.getElementById('editBudget')?.addEventListener('click',()=>{elements.budgetType.value=b?.type||'monthly';elements.budgetInput.value=b?.limit??'';elements.budgetError.textContent='';elements.budgetOverlay.classList.remove('hidden');elements.budgetInput.focus()});
   const details=b?.limit!=null?`${label} · ${b.used===null?'用量待同步':`已计入 ${money(b.used)}`}${b.overage>0?` · 超出 ${money(b.overage)}`:''} · ${b.type==='trial'?'不自动刷新':b.monthlyResetEnabled?`下月刷新 ${formatTime(b.nextMonthAt)}`:'月刷新关闭 · 已用量持续累计'}`:'原额度由超级管理员设置后启用';

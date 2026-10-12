@@ -83,6 +83,7 @@ test('HTTP roles, CSRF, cache, and budget enforcement through mock Sub2API',asyn
     const id=added.keys[0].id;
     assert.equal(added.keys[0].usage.daily.length,7);
     assert.equal(added.keys[0].usage.daily.at(-1).cost,50);
+    assert.deepEqual(added.keys[0].usage.lastWeek,{cost:0,requests:0});
     assert.ok(added.keys[0].usage.daily.slice(0,-1).every(day=>day.cost===0));
     assert.equal(added.budget.status,'unset');
     assert.equal((await request('/api/keys/'+id,'PUT',{quota:80})).status,200);

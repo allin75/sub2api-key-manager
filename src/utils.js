@@ -95,12 +95,14 @@ export function dateRanges(now = new Date(), timeZone = 'Asia/Shanghai') {
   const addDays = (date, count) => new Date(date.getTime() + count * 86400000);
   const format = date => date.toISOString().slice(0, 10);
   const weekDay = (today.getUTCDay() + 6) % 7;
+  const weekStart = addDays(today, -weekDay);
   const monthStart = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 1));
   const lastMonthStart = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - 1, 1));
   return {
-    yesterday: [format(addDays(today, -1)), format(addDays(today, -1))],
     today: [format(today), format(today)],
-    week: [format(addDays(today, -weekDay)), format(today)],
+    yesterday: [format(addDays(today, -1)), format(addDays(today, -1))],
+    week: [format(weekStart), format(today)],
+    lastWeek: [format(addDays(weekStart, -7)), format(addDays(weekStart, -1))],
     month: [format(monthStart), format(today)],
     lastMonth: [format(lastMonthStart), format(addDays(monthStart, -1))]
   };
