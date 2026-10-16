@@ -1,0 +1,23 @@
+services:
+  tunnel:
+    build:
+      context: .
+      args:
+        RELAY_BASE_IMAGE: ${RELAY_BASE_IMAGE:-alpine:3.22}
+    image: sub2api-key-manager-ssh-relay:20261016
+    container_name: sub2api-key-manager-ssh-relay
+    restart: unless-stopped
+    network_mode: host
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - ./ssh_config:/etc/relay/ssh_config:ro
+      - /home/Sun/.config/sub2api-key-manager-relay:/etc/relay/keys:ro
+    logging:
+      driver: json-file
+      options:
+        max-size: 5m
+        max-file: '2'

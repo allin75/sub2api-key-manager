@@ -1,0 +1,19 @@
+Host key-manager-cloud
+  HostName 1.94.7.137
+  Port 22
+  User key-manager-tunnel
+  IdentityFile /etc/relay/keys/id_ed25519
+  UserKnownHostsFile /etc/relay/keys/known_hosts
+  StrictHostKeyChecking yes
+  IdentitiesOnly yes
+  BatchMode yes
+  PasswordAuthentication no
+  KbdInteractiveAuthentication no
+  ExitOnForwardFailure yes
+  ConnectTimeout 10
+  ConnectionAttempts 1
+  ServerAliveInterval 15
+  ServerAliveCountMax 3
+  TCPKeepAlive yes
+  RemoteForward 127.0.0.1:13100 127.0.0.1:3100
+  LogLevel ERROR

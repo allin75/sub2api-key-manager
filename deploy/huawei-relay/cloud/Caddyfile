@@ -1,0 +1,14 @@
+key-direct.1501129.xyz {
+  encode zstd gzip
+  reverse_proxy 127.0.0.1:13100 {
+    header_up Host {http.request.host}
+    header_up X-Forwarded-Host {http.request.host}
+    header_up X-Forwarded-Proto https
+    header_up X-Forwarded-For {http.request.remote.host}
+    header_up -Forwarded
+    transport http {
+      dial_timeout 5s
+      response_header_timeout 30s
+    }
+  }
+}
