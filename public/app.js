@@ -11,6 +11,7 @@ for(const id of ['budgetType','accessType','rewardList','openRewardButton','rewa
 for (const id of ['sessionLoading','loginButton','topbar','announcementSlot','announcementSurface','openAnnouncementButton','announcementDot','announcementDialog','announcementShade','announcementTitle','announcementHint','announcementBody','announcementError','closeAnnouncementButton','acknowledgeAnnouncementButton']) elements[id] = document.getElementById(id);
 const activeUiAnimations = new Set();
 for (const id of ['syncProgress','syncHistory','syncHistoryList']) elements[id] = document.getElementById(id);
+for (const id of ['saveQuotaButton','quotaProgress']) elements[id] = document.getElementById(id);
 state.sync = null;
 let manualRefreshPending = false;
 let syncStatusLoading = false;
@@ -482,7 +483,7 @@ function showLogin() {
   elements.password.disabled = false;
   closeUsagePreview();
   resetSyncUi();
-  closeBudget(); closeAdd(); closeQuota(); closeAccess(); closeTransfer(); closeReward(); closeNoticeComposer();
+  closeBudget(); closeAdd(); closeQuota(true); closeAccess(); closeTransfer(); closeReward(); closeNoticeComposer();
   state.loadVersion++;
   state.csrfToken='';state.keys=[];state.budget=null;state.accessKeys=[];state.accessKey=null;state.selectedAccessId='';state.rewards=[];state.sorting=false;elements.rewardList.innerHTML='';
   elements.accessList.innerHTML='';elements.accessTotals.innerHTML='';elements.currentAccess.textContent='';elements.usageSummary.innerHTML='';elements.keyGrid.innerHTML='';
@@ -495,6 +496,7 @@ function showLogin() {
 
 async function loadKeys(showMessage=false) {
   if(state.sorting||state.policySaving||manualRefreshPending)return;
+  if(showMessage&&activeRateLimit()){updateRefreshFeedback();return;}
   const version=++state.loadVersion;
   if(showMessage){manualRefreshPending=true;updateRefreshFeedback();}
   if(!state.keys.length)elements.keyGrid.innerHTML='<div class="loading">正在读取用量数据…</div>';
@@ -515,7 +517,7 @@ async function loadKeys(showMessage=false) {
     renderAccessKeys();renderCurrentAccess();
     renderSummary(); renderKeys(); renderSchedule();renderRewards();
     void readSyncStatus();
-    if(showMessage) toast(data.cached?'已显示缓存，手动刷新最多每 5 分钟一次':data.budget?.stale?'同步未完成，保留最近成功数据':'数据已刷新');
+    if(showMessage) toast(data.rateLimited?`上游请求受限，下次尝试：${formatSyncTime(data.budget.nextCheckAt)}`:data.cached?'已显示缓存，手动刷新最多每 5 分钟一次':data.budget?.stale?'同步未完成，保留最近成功数据':'数据已刷新');
     checkBudgetNotification();
   } catch(error) {
     if(version===state.loadVersion)elements.syncStatus.textContent=error.message;
@@ -530,11 +532,16 @@ function resetSyncUi() {
 
 function updateRefreshFeedback() {
   const busy=manualRefreshPending||!!state.sync?.inProgress;
-  setBusy(elements.refreshButton,busy,busy?'刷新中…':'刷新数据');
+  const until=activeRateLimit();
+  setBusy(elements.refreshButton,busy||!!until,busy?'刷新中…':until?'等待下次刷新':'刷新数据');
   elements.refreshButton.classList.toggle('sync-refreshing',busy);
   elements.refreshButton.setAttribute('aria-busy',String(busy));
-  elements.syncProgress.classList.toggle('hidden',!busy);
-  elements.syncProgress.textContent=busy?'正在刷新数据…':'';
+  elements.syncProgress.classList.toggle('hidden',!busy&&!until);
+  elements.syncProgress.textContent=until?`上游请求受限，本轮刷新已跳过。下次自动尝试：${formatSyncTime(until)}（北京时间）；当前保留最近成功数据。`:busy?'正在刷新数据…':'';
+}
+
+function activeRateLimit() {
+  return [state.sync?.rateLimitedUntil,state.budget?.rateLimitedUntil].filter(value=>Date.parse(value)>Date.now()).sort().at(-1)||null;
 }
 
 function renderSyncHistory(events) {
@@ -556,7 +563,7 @@ async function readSyncStatus() {
     const status=await api('/api/sync-status');
     if(version!==viewVersion||id!==state.selectedAccessId)return;
     state.sync=status;updateRefreshFeedback();renderSyncHistory(status.events);
-    if(!manualRefreshPending&&state.budget&&(status.lastSuccessAt!==state.budget.lastSuccessAt||status.error!==state.budget.error))await loadKeys();
+    if(!manualRefreshPending&&state.budget&&(status.lastSuccessAt!==state.budget.lastSuccessAt||status.error!==state.budget.error||status.rateLimitedUntil!==state.budget.rateLimitedUntil))await loadKeys();
   } catch {
     if(version===viewVersion&&id===state.selectedAccessId){state.sync=null;updateRefreshFeedback();}
   }
@@ -607,6 +614,7 @@ function renderAccessKeys(){
 
 async function selectAccess(id){
   if(state.sorting||state.policySaving)return;
+  closeQuota(true);
   closeUsagePreview();
   resetSyncUi();
   state.selectedAccessId=id;state.keys=[];state.budget=null;state.rewards=[];renderRewards();
@@ -699,7 +707,7 @@ function renderSummary(){
   const details=b?.limit!=null?`${label} · ${b.used===null?'用量待同步':`已计入 ${money(b.used)}`}${b.overage>0?` · 超出 ${money(b.overage)}`:''} · ${b.type==='trial'?'不自动刷新':b.monthlyResetEnabled?`下月刷新 ${formatTime(b.nextMonthAt)}`:'月刷新关闭 · 已用量持续累计'}`:'原额度由超级管理员设置后启用';
   elements.budgetStatus.textContent=`${b?.status==='blocked'?'原额度已用尽且无可用奖励，已配置 Key 暂停使用。 ':''}${details}${b?.pendingCount?` · ${b.pendingCount} 项状态变更待重试`:''}`;
   elements.budgetStatus.classList.toggle('budget-blocked',b?.status==='blocked');
-  elements.syncStatus.textContent=`数据刷新于：${b?.lastSuccessAt?formatSyncTime(b.lastSuccessAt):'尚未成功刷新'} · 下次刷新：${b?.nextCheckAt?formatSyncTime(b.nextCheckAt):'等待调度'}${b?.error?` · ${b.error}`:''}`;
+  elements.syncStatus.textContent=`数据刷新于：${b?.lastSuccessAt?formatSyncTime(b.lastSuccessAt):'尚未成功刷新'} · 下次尝试：${b?.nextCheckAt?formatSyncTime(b.nextCheckAt):'等待调度'}（北京时间）${b?.error?` · ${b.error}`:''}`;
 }
 
 function budgetNoticeKey(accessId, budget) {
@@ -751,9 +759,54 @@ function renderSchedule(){elements.resetCountdown.closest('.schedule-pill').clas
 async function removeKey(id){if(!confirm('只从本管理页移除，不会删除 Sub2API 中的 Key。确定继续吗？'))return;try{await api(`/api/keys/${encodeURIComponent(id)}`,{method:'DELETE'});toast('已从管理列表移除');await loadKeys();}catch(error){toast(error.message)}}
 function closeAdd(){elements.addOverlay.classList.add('hidden');elements.addForm.reset();elements.addError.textContent=''}
 let quotaKeyId='';
-function openQuota(id,name,value){quotaKeyId=id;elements.quotaDescription.textContent=`调整“${name}”的额度上限，单位为 USD。`;elements.quotaInput.value=Number(value||0);elements.quotaError.textContent='';elements.quotaOverlay.classList.remove('hidden');elements.quotaInput.focus()}
-function closeQuota(){elements.quotaOverlay.classList.add('hidden');elements.quotaForm.reset();elements.quotaError.textContent='';quotaKeyId=''}
-async function updateQuota(event){event.preventDefault();const quota=Number(elements.quotaInput.value);if(!Number.isFinite(quota)||quota<0){elements.quotaError.textContent='请输入不小于 0 的数字';return}try{const result=await api(`/api/keys/${encodeURIComponent(quotaKeyId)}`,{method:'PUT',body:{quota}});closeQuota();toast(result.pendingSync?'配额已保存，数据刷新失败，暂时显示旧数据':'配额已更新');await loadKeys()}catch(error){elements.quotaError.textContent=error.message}}
+let quotaSubmission=null;
+function quotaBusy(busy){
+  elements.quotaForm.setAttribute('aria-busy',String(busy));
+  for(const el of [elements.quotaInput,elements.closeQuotaButton,elements.cancelQuotaButton])el.disabled=busy;
+  setBusy(elements.saveQuotaButton,busy,busy?'保存中…':'保存配额');
+  elements.saveQuotaButton.classList.toggle('quota-saving',busy);
+  elements.quotaProgress.classList.toggle('hidden',!busy);
+  elements.quotaProgress.textContent=busy?'正在保存配额，请勿重复提交…':'';
+}
+function openQuota(id,name,value){
+  if(quotaSubmission)return;
+  quotaKeyId=id;quotaBusy(false);
+  elements.quotaDescription.textContent=`调整“${name}”的额度上限，单位为 USD。`;
+  elements.quotaInput.value=Number(value||0);elements.quotaError.textContent='';
+  elements.quotaOverlay.classList.remove('hidden');elements.quotaInput.focus();
+}
+function closeQuota(force=false){
+  if(quotaSubmission&&force!==true)return;
+  if(quotaSubmission)clearTimeout(quotaSubmission.timer);
+  quotaSubmission=null;quotaBusy(false);
+  elements.quotaOverlay.classList.add('hidden');elements.quotaForm.reset();elements.quotaError.textContent='';quotaKeyId='';
+}
+async function updateQuota(event){
+  event.preventDefault();
+  if(quotaSubmission)return;
+  const quota=Number(elements.quotaInput.value);
+  if(!Number.isFinite(quota)||quota<0||quota>1e8){elements.quotaError.textContent='请输入 0–100,000,000 之间的数字';return;}
+  if(activeRateLimit()){elements.quotaError.textContent=`上游请求受限，请在 ${formatSyncTime(activeRateLimit())}（北京时间）后重试`;return;}
+  const submission={version:viewVersion,accessId:state.selectedAccessId};
+  const current=()=>quotaSubmission===submission&&submission.version===viewVersion&&submission.accessId===state.selectedAccessId;
+  quotaSubmission=submission;elements.quotaError.textContent='';quotaBusy(true);
+  submission.timer=setTimeout(()=>{if(current())elements.quotaProgress.textContent='仍在处理，请勿重复提交。请等待服务器确认保存结果。';},8000);
+  try{
+    const result=await api(`/api/keys/${encodeURIComponent(quotaKeyId)}`,{method:'PUT',body:{quota}});
+    if(!current())return;
+    state.loadVersion++;
+    state.keys=result.keys;state.budget=result.budget;state.schedule=result.schedule;state.rewards=result.rewards||[];
+    renderKeys();renderSummary();renderCurrentAccess();renderSchedule();renderRewards();
+    closeQuota(true);
+    toast(result.quotaCacheSaved===false?'配额已保存，本地显示更新失败，请稍后重新读取':result.pendingSync?'配额已保存，用量待下次刷新':'配额已保存');
+    void readSyncStatus();
+  }catch(error){
+    if(current())elements.quotaError.textContent=error instanceof TypeError?'连接中断，保存结果尚未确认，请先核对配额，勿重复提交':error.message;
+  }finally{
+    clearTimeout(submission.timer);
+    if(quotaSubmission===submission){quotaSubmission=null;quotaBusy(false);}
+  }
+}
 function setBusy(button,busy,text){button.disabled=busy;button.textContent=text}
 function money(value){return `$${Number(value||0).toFixed(2)}`}
 function pad(value){return String(value).padStart(2,'0')}

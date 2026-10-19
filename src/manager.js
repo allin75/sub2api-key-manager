@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { hashKey, maskKey, isWeeklyResetDue, weeklyResetState, syncErrorDetail } from './utils.js';
-import { FIVE_MINUTES, ZONE, monthId, nextMonthAt, nextCheck, isDaytime, micros, spent, isOver, rewardViews, hasReward, settleAccounting, reordered, closeAccountingWindow, refreshPolicy } from './budget-policy.js';
+import { FIVE_MINUTES, ZONE, monthId, nextMonthAt, nextCheck, rateLimitNextCheck, isDaytime, micros, spent, isOver, rewardViews, hasReward, settleAccounting, reordered, closeAccountingWindow, refreshPolicy } from './budget-policy.js';
 
 export class ManagerError extends Error {
   constructor(message,status=400,cause){super(message,cause?{cause}:undefined);this.status=status;}
@@ -12,9 +12,13 @@ export class KeyManager {
     this.scheduleOffset=scheduleOffset;
     this.syncStatus={inProgress:false,startedAt:null,source:null,stage:null,keyId:null};
     this.queue=Promise.resolve(); this.refreshPromise=null; this.tickPending=false;
+    this.quotaPromises=new Map();
   }
   exclusive(fn){const operation=this.queue.then(fn);this.queue=operation.catch(()=>{});return operation;}
   async save(s){await this.store.saveState(s);}
+  cooldown(s=this.store.getState()) {
+    return [this.upstream.rateLimitUntil?.(),s.cache.rateLimitedUntil].filter(value=>Date.parse(value)>this.clock()).sort().at(-1)||null;
+  }
   rollover(s) {
     const month=monthId(this.clock());
     if(s.budget.month===month)return false;
@@ -31,33 +35,33 @@ export class KeyManager {
   }
   view() {
     const s=this.store.getState(), b=s.budget, now=this.clock();
-    const ready=!!s.cache.lastSuccessAt && monthId(new Date(s.cache.lastSuccessAt))===b.month;
+    const ready=!!s.cache.lastSuccessAt && monthId(new Date(s.cache.lastSuccessAt))===b.month, cooldown=this.cooldown(s);
     const used=ready?spent(b)/1e6:null, expired=s.cache.nextCheckAt && now>=new Date(s.cache.nextCheckAt);
     return {keys:s.configuredKeys.map(c=>s.cache.keys.find(k=>k.id===c.id)||{id:c.id,maskedKey:c.maskedKey,matched:false,error:'等待首次同步'}),
       orderVersion:s.orderVersion||0,rewards:rewardViews(b,now),
       schedule:refreshPolicy(b).weeklyResetEnabled?weeklyResetState(now,ZONE):null, lastResetAt:s.lastResetAt,
       budget:{type:b.type||'monthly',...refreshPolicy(b),cycleMonth:b.cycleMonth||b.month,trialStartedAt:b.trialStartedAt||null,limit:b.limit,used,balance:b.limit===null||used===null?null:Math.max(0,b.limit-used),overage:b.limit===null||used===null?0:Math.max(0,used-b.limit),month:b.month,
         status:b.limit===null?'unset':b.blocked?'blocked':'active',pendingCount:Object.values(b.paused).filter(p=>p.phase!=='disabled').length,
-        lastSuccessAt:s.cache.lastSuccessAt,nextCheckAt:!isDaytime(now)&&expired&&!s.actionRetry?nextCheck(now,this.scheduleOffset()):s.actionRetry?s.retryAt:s.cache.nextCheckAt,nextMonthAt:refreshPolicy(b).monthlyResetEnabled?nextMonthAt(now):null,
-        stale:!!s.cache.error || !s.cache.lastSuccessAt || !!expired || b.month!==monthId(now),error:s.cache.error}};
+        lastSuccessAt:s.cache.lastSuccessAt,rateLimitedUntil:cooldown,nextCheckAt:cooldown||(!isDaytime(now)&&expired&&!s.actionRetry?nextCheck(now,this.scheduleOffset()):s.actionRetry?s.retryAt:s.cache.nextCheckAt),nextMonthAt:refreshPolicy(b).monthlyResetEnabled?nextMonthAt(now):null,
+        stale:!!cooldown || !!s.cache.error || !s.cache.lastSuccessAt || !!expired || b.month!==monthId(now),error:s.cache.error}};
   }
   syncView() {
     const s=this.store.getState();
-    return {...this.syncStatus,lastSuccessAt:s.cache.lastSuccessAt,nextCheckAt:s.cache.nextCheckAt,error:s.cache.error,events:s.cache.syncEvents||[]};
+    return {...this.syncStatus,lastSuccessAt:s.cache.lastSuccessAt,nextCheckAt:this.view().budget.nextCheckAt,rateLimitedUntil:this.cooldown(s),error:s.cache.error,events:s.cache.syncEvents||[]};
   }
   async managedKeys(s) {
     const configured=[...s.configuredKeys];
     for(const [hash,key] of Object.entries(s.budget.paused))if(!configured.some(item=>item.keyHash===hash))configured.push({...key,keyHash:hash});
     if(!configured.length)return [];
     this.syncStatus.stage='key-read';
-    const missing=configured.filter(key=>!Number.isSafeInteger(key.upstreamId));
-    const matched=missing.length?await this.upstream.listAllKeys():[];
+    const matched=await this.upstream.listAllKeys();
+    const byHash=new Map(matched.map(key=>[hashKey(String(key.key||'')),key]));
     const result=[];
     for(const key of configured){
       this.syncStatus.keyId=key.id;
-      const upstreamKey=Number.isSafeInteger(key.upstreamId)?await this.upstream.getKey(key.upstreamId):matched.find(item=>hashKey(String(item.key||''))===key.keyHash);
+      const upstreamKey=byHash.get(key.keyHash);
       if(!upstreamKey || hashKey(String(upstreamKey.key||''))!==key.keyHash)throw new ManagerError('关联 Key 已不存在或身份不一致，请管理员检查',502);
-      if(!Number.isSafeInteger(upstreamKey.id)||upstreamKey.id<=0)throw new ManagerError('上游 Key ID 无效',502);
+      if(!Number.isSafeInteger(upstreamKey.id)||upstreamKey.id<=0||(Number.isSafeInteger(key.upstreamId)&&key.upstreamId!==upstreamKey.id))throw new ManagerError('上游 Key ID 无效或身份已变化',502);
       key.upstreamId=upstreamKey.id;
       const current=s.configuredKeys.find(item=>item.id===key.id);
       if(current)current.upstreamId=key.upstreamId;
@@ -71,6 +75,7 @@ export class KeyManager {
     if(this.refreshPromise)return this.refreshPromise;
     this.refreshPromise=this.exclusive(async()=>{
       const s=this.store.getState(),changed=this.rollover(s);
+      if(this.cooldown(s))return {...this.view(),cached:true,rateLimited:true};
       if(!changed && s.cache.lastAttemptAt && this.clock()-new Date(s.cache.lastAttemptAt)<FIVE_MINUTES) return {...this.view(),cached:true};
       await this.sync(s,{source:'manual'});return this.view();
     }).finally(()=>{this.refreshPromise=null;});
@@ -82,6 +87,7 @@ export class KeyManager {
     finally{this.syncStatus={...this.syncStatus,inProgress:false,keyId:null,stage:null};}
   }
   async syncNow(s,{allowRestore=true}={}) {
+    if(this.cooldown(s))return false;
     this.rollover(s);
     const now=this.clock(), cycleMonth=monthId(now);
     s.cache.lastAttemptAt=now.toISOString();
@@ -113,8 +119,13 @@ export class KeyManager {
           const end=track.until&&track.until<now.toISOString()?track.until:now.toISOString();
           if(end<=track.from)continue;
           this.syncStatus.stage='detail-read';this.syncStatus.keyId=s.configuredKeys.find(key=>key.keyHash===hash)?.id||null;
-          const records=await this.upstream.getUsageRecords(track.apiKeyId,track.from,end);
+          const retained=Object.values(accounting.records).filter(record=>record.keyHash===hash);
+          const lastFull=track.lastFullCheckAt||s.cache.lastSuccessAt;
+          const fullDue=!lastFull||now-new Date(lastFull)>=7*86400000;
+          const afterId=fullDue?0:retained.reduce((max,record)=>Math.max(max,Number(record.id)||0),0);
+          const records=await this.upstream.getUsageRecords(track.apiKeyId,track.from,end,{afterId});
           for(const record of records) accounting.records[record.id]={id:record.id,keyHash:hash,at:record.at,cost:micros(record.cost),eligible:track.windows.some(w=>record.at>=w.from&&(!w.until||record.at<w.until))};
+          track.lastFullCheckAt=afterId?lastFull:now.toISOString();
         }
         const detailTotals={};
         for(const record of Object.values(accounting.records))if(monthId(new Date(record.at))>=(accounting.cycleMonth||accounting.month))detailTotals[record.keyHash]=(detailTotals[record.keyHash]||0)+record.cost;
@@ -129,6 +140,7 @@ export class KeyManager {
       if(monthId(this.clock())!==cycleMonth)throw new Error('跨月查询，请等待下一次同步');
       accounting.rawLedger=ledger;settleAccounting(accounting);s.budget=accounting;
       s.cache.keys=rows;s.cache.lastSuccessAt=this.clock().toISOString();s.cache.error=null;
+      delete s.cache.rateLimitedUntil;
       s.budget.blocked=isOver(s.budget)&&!hasReward(s.budget,now);
       s.actionRetry=true;
       await this.save(s);
@@ -142,11 +154,15 @@ export class KeyManager {
       if(error instanceof ManagerError)detail.message=error.message;
       s.cache.error=`${detail.message}，保留最近成功数据`;
       this.recordSyncEvent(s,{kind:'failed',...detail,stage:this.syncStatus.stage,keyId:this.syncStatus.keyId});
-      s.retryAt=new Date(this.clock().getTime()+FIVE_MINUTES).toISOString();
+      if(detail.status===429){
+        s.cache.rateLimitedUntil=error.retryAt||this.upstream.rateLimitUntil?.()||rateLimitNextCheck(this.clock(),error.retryAfter);
+        s.retryAt=s.cache.rateLimitedUntil;
+      }else s.retryAt=new Date(this.clock().getTime()+FIVE_MINUTES).toISOString();
     }
     s.cache.nextCheckAt=nextCheck(this.clock(),this.scheduleOffset());
-    s.cache.schedulePolicy='hourly-v1';s.cache.scheduleOffset=this.scheduleOffset();
+    s.cache.schedulePolicy='batch-hourly-v2';s.cache.scheduleOffset=this.scheduleOffset();
     for(const reward of rewardViews(s.budget,this.clock()))if(reward.status==='active'&&reward.expiresAt<s.cache.nextCheckAt)s.cache.nextCheckAt=reward.expiresAt;
+    if(this.cooldown(s))s.cache.nextCheckAt=this.cooldown(s);
     await this.save(s);
     return !s.cache.error;
   }
@@ -173,7 +189,7 @@ export class KeyManager {
           if(k.status!=='inactive')await this.upstream.updateKeyStatus(k.id,'inactive');
           p.phase='disabled';k.status='inactive';
           this.cacheStatus(s,p.id,'inactive');await this.save(s);
-        }catch(error){failures.push(hash);failureError=error;this.syncStatus.keyId=p.id;}
+        }catch(error){if(error.status===429)throw error;failures.push(hash);failureError=error;this.syncStatus.keyId=p.id;}
       }
     } else {
       for(const [hash,p] of Object.entries(s.budget.paused)){
@@ -186,7 +202,7 @@ export class KeyManager {
           // Expired/quota-exhausted keys must not be forced into active status.
           this.cacheStatus(s,p.id,k.status==='inactive'?'active':k.status);
           delete s.budget.paused[hash];await this.save(s);
-        }catch(error){failures.push(hash);failureError=error;this.syncStatus.keyId=p.id;}
+        }catch(error){if(error.status===429)throw error;failures.push(hash);failureError=error;this.syncStatus.keyId=p.id;}
       }
     }
     if(failures.length)throw new ManagerError(`${failures.length} 个 Key 状态同步失败，5 分钟后重试`,502,failureError);
@@ -255,7 +271,7 @@ export class KeyManager {
     if(typeof customKey!=='string'||!/^[A-Za-z0-9_-]{16,256}$/.test(customKey.trim()))throw new ManagerError('Key 格式无效');
     const key=customKey.trim(),hash=hashKey(key),s=this.store.getState();
     if(s.configuredKeys.some(c=>c.keyHash===hash))return {created:false,...this.view()};
-    const all=await this.upstream.listAllKeys();
+    const all=await this.upstream.listAllKeys({force:true});
     const matched=all.find(k=>hashKey(String(k.key||''))===hash);
     if(!matched)throw new ManagerError('该 Key 不属于当前 Sub2API 账号',404);
     const tracked=s.budget.paused[hash];
@@ -275,26 +291,45 @@ export class KeyManager {
     // ledger and paused entries intentionally outlive list membership.
     await this.save(s);return this.view();
   });}
-  quota(id,quota){return this.exclusive(async()=>{
-    if(typeof quota!=='number'||!Number.isFinite(quota)||quota<0||quota>1e8)throw new ManagerError('配额必须为有效非负数');
-    const s=this.store.getState(),c=s.configuredKeys.find(k=>k.id===id);
-    if(!c)throw new ManagerError('Key 不存在',404);
-    if(s.budget.blocked||Object.keys(s.budget.paused).length)throw new ManagerError('月度停用或恢复尚未完成，暂不可修改单 Key 配额',409);
-    const all=await this.managedKeys(s),k=all.find(k=>hashKey(String(k.key||''))===c.keyHash);
-    if(!k)throw new ManagerError('Key 无法匹配',409);
-    await this.upstream.updateKeyQuota(k.id,quota);
-    const synced=await this.sync(s);
-    return {...this.view(),quotaSaved:true,pendingSync:!synced};
-  });}
+  quota(id,quota){
+    const existing=this.quotaPromises.get(id);
+    if(existing)return existing.quota===quota?existing.promise:Promise.reject(new ManagerError('该 Key 的配额正在保存，请等待完成',409));
+    const promise=this.exclusive(async()=>{
+      if(typeof quota!=='number'||!Number.isFinite(quota)||quota<0||quota>1e8)throw new ManagerError('配额必须为有效非负数');
+      const s=this.store.getState(),c=s.configuredKeys.find(k=>k.id===id);
+      if(!c)throw new ManagerError('Key 不存在',404);
+      const cooldown=this.cooldown(s);
+      if(cooldown)throw new ManagerError(`上游请求受限，请在 ${new Date(cooldown).toLocaleString('zh-CN',{timeZone:ZONE})}（北京时间）后重试`,429);
+      if(s.budget.blocked||Object.keys(s.budget.paused).length)throw new ManagerError('月度停用或恢复尚未完成，暂不可修改单 Key 配额',409);
+      const all=await this.managedKeys(s),k=all.find(k=>hashKey(String(k.key||''))===c.keyHash);
+      if(!k)throw new ManagerError('Key 无法匹配',409);
+      try{await this.upstream.updateKeyQuota(k.id,quota);}
+      catch(error){
+        if(!Number.isInteger(error.status))throw new ManagerError('配额保存结果暂未确认，请稍后核对配额，勿重复提交',409,error);
+        throw error;
+      }
+      const row=s.cache.keys.find(key=>key.id===id);
+      if(row)row.quota=quota;
+      try{await this.save(s);}
+      catch{
+        const view=this.view();
+        return {...view,keys:view.keys.map(key=>key.id===id?{...key,quota}:key),quotaSaved:true,quotaCacheSaved:false,pendingSync:true};
+      }
+      return {...this.view(),quotaSaved:true,usagePending:true,pendingSync:!!s.cache.error};
+    }).finally(()=>{this.quotaPromises.delete(id);});
+    this.quotaPromises.set(id,{quota,promise});
+    return promise;
+  }
   tick(){
     if(this.tickPending)return this.queue;
     this.tickPending=true;
     return this.exclusive(async()=>{
       const s=this.store.getState(),now=this.clock(),previousMonth=s.budget.month,changed=this.rollover(s);
       if(changed)await this.save(s);
-      if(s.cache.schedulePolicy!=='hourly-v1'||s.cache.scheduleOffset!==this.scheduleOffset()){
+      if(this.cooldown(s))return;
+      if(s.cache.schedulePolicy!=='batch-hourly-v2'||s.cache.scheduleOffset!==this.scheduleOffset()){
         s.cache.nextCheckAt=nextCheck(now,this.scheduleOffset(),true);
-        s.cache.schedulePolicy='hourly-v1';s.cache.scheduleOffset=this.scheduleOffset();await this.save(s);
+        s.cache.schedulePolicy='batch-hourly-v2';s.cache.scheduleOffset=this.scheduleOffset();await this.save(s);
       }
       const retryReady=!s.retryAt||now>=new Date(s.retryAt);
       const pending=s.actionRetry || Object.values(s.budget.paused).some(p=>p.phase!=='disabled');

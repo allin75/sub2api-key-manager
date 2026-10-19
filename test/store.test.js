@@ -14,12 +14,15 @@ test('sync slots and isolated failure history survive reordering and a disk relo
     snapshot.accessKeys.push({id:'second',secret:'demo-two',previousSecrets:[],ownedHashes:[],state:structuredClone(store.initialState)});
     await store.saveState(snapshot);await store.initializeSyncSlots();
     const before=store.getState();assert.deepEqual(before.accessKeys.map(entry=>entry.syncSlot),[0,1]);
+    before.upstreamSync={rateLimitedUntil:'2026-10-19T04:00:00.000Z'};
+    await store.saveState(before);
     const scoped=store.scopedStore(before.accessKeys[0].id),state=scoped.getState();
     state.cache.syncEvents=[{kind:'failed',at:'2026-10-09T01:00:00Z',message:'上游连接或请求超时',code:'UND_ERR_CONNECT_TIMEOUT',stage:'usage-read',keyId:'demo'}];
     await scoped.saveState(state);
     const reordered=store.getState();reordered.accessKeys.reverse();await store.saveState(reordered);await store.initializeSyncSlots();
     const reloaded=await import(`../src/store.js?sync-reload=${Date.now()}`);await reloaded.loadStore();
     assert.deepEqual(reloaded.getState().accessKeys.map(entry=>entry.syncSlot),[1,0]);
+    assert.equal(reloaded.getState().upstreamSync.rateLimitedUntil,'2026-10-19T04:00:00.000Z');
     assert.equal(reloaded.scopedStore(before.accessKeys[0].id).getState().cache.syncEvents.length,1);
     assert.equal(reloaded.scopedStore('second').getState().cache.syncEvents,undefined);
     const invalid=reloaded.getState();invalid.accessKeys[0].state.cache.syncEvents=[{kind:'failed',at:'invalid',message:'bad'}];

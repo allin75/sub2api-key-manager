@@ -4,10 +4,10 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Sub2API Key 用量管理</title>
-  <link rel="stylesheet" href="/styles.css?v=20261012-1">
-  <link rel="stylesheet" href="/overrides.css?v=20261012-1">
+  <link rel="stylesheet" href="/styles.css?v=20261019-1">
+  <link rel="stylesheet" href="/overrides.css?v=20261019-1">
   <script src="/vendor/anime.umd.min.js?v=4.5.0" defer></script>
-  <script src="/app.js?v=20261012-1" defer></script>
+  <script src="/app.js?v=20261019-1" defer></script>
 </head>
 <body>
   <div class="session-loading" id="sessionLoading" role="status"><div class="brand-mark">S2</div><span>正在加载…</span></div>
@@ -87,7 +87,8 @@
       <label for="quotaInput">额度上限（USD）</label>
       <input id="quotaInput" type="number" min="0" max="100000000" step="0.01" required placeholder="0 表示不限制">
       <div class="form-error" id="quotaError"></div>
-      <div class="modal-actions"><button type="button" class="secondary" id="cancelQuotaButton">取消</button><button type="submit" class="primary">保存配额</button></div>
+      <p id="quotaProgress" class="quota-save-progress hidden" role="status" aria-live="polite"></p>
+      <div class="modal-actions"><button type="button" class="secondary" id="cancelQuotaButton">取消</button><button type="submit" class="primary" id="saveQuotaButton">保存配额</button></div>
     </form>
   </div>
 

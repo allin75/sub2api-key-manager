@@ -35,6 +35,10 @@ export function getState() {
   return structuredClone(state);
 }
 
+export function getUpstreamCooldown() {
+  return state.upstreamSync?.rateLimitedUntil || null;
+}
+
 // Run once at startup. The original password keeps all pre-upgrade data.
 export async function initializeAccessKeys(secret) {
   if (state.accessKeys) {
@@ -147,6 +151,7 @@ async function persist() {
 }
 
 function validateState(value) {
+  if(value.upstreamSync!==undefined&&(!value.upstreamSync||!Number.isFinite(Date.parse(value.upstreamSync.rateLimitedUntil))))throw new Error('上游限流等待时间无效');
   if (value.targetedNotices !== undefined && !validTargetedNotices(value.targetedNotices, value.accessKeys)) throw new Error('定向公告记录无效');
   if (value.announcementAcknowledgements !== undefined) {
     const acknowledgements = value.announcementAcknowledgements;
@@ -185,6 +190,7 @@ function validateState(value) {
   if (!value.budget || (value.budget.limit !== null && (!Number.isFinite(value.budget.limit) || value.budget.limit <= 0))) throw new Error('月度额度配置无效');
   if (!value.budget.ledger || !value.budget.paused || !value.cache) throw new Error('月度账本配置无效');
   if(value.configuredKeys.some(key=>key.upstreamId!==undefined&&(!Number.isSafeInteger(key.upstreamId)||key.upstreamId<=0)))throw new Error('上游 Key ID 配置无效');
+  if(value.cache.rateLimitedUntil!==undefined&&!Number.isFinite(Date.parse(value.cache.rateLimitedUntil)))throw new Error('限流等待时间无效');
   if(value.cache.syncEvents!==undefined&&(!Array.isArray(value.cache.syncEvents)||value.cache.syncEvents.length>200||value.cache.syncEvents.some(event=>
     !event||!['failed','recovered'].includes(event.kind)||!Number.isFinite(Date.parse(event.at))||typeof event.message!=='string'||event.message.length>240||
     (event.code!==undefined&&!/^[A-Za-z0-9_]{1,64}$/.test(event.code))||
@@ -201,6 +207,7 @@ function validateState(value) {
   if(b.rewards&&(!Array.isArray(b.rewards)||b.rewards.some(r=>typeof r.id!=='string'||!Number.isFinite(r.limit)||r.limit<=0||!Number.isSafeInteger(r.used)||r.used<0||!Number.isFinite(Date.parse(r.startsAt))||!Number.isFinite(Date.parse(r.expiresAt))||r.expiresAt<=r.startsAt)))throw new Error('奖励账本无效');
   if(b.records&&Object.entries(b.records).some(([id,r])=>id!==r.id||typeof r.keyHash!=='string'||!Number.isFinite(Date.parse(r.at))||!Number.isSafeInteger(r.cost)||r.cost<0))throw new Error('消费明细账本无效');
   if(b.tracking&&Object.values(b.tracking).some(t=>!Number.isSafeInteger(t.apiKeyId)||!Number.isFinite(Date.parse(t.from))||(t.until&&!Number.isFinite(Date.parse(t.until)))||!Array.isArray(t.windows)||t.windows.some(w=>!Number.isFinite(Date.parse(w.from))||(w.until&&(!Number.isFinite(Date.parse(w.until))||w.until<w.from)))))throw new Error('消费追踪窗口无效');
+  if(b.tracking&&Object.values(b.tracking).some(t=>t.lastFullCheckAt!==undefined&&!Number.isFinite(Date.parse(t.lastFullCheckAt))))throw new Error('明细核对时间无效');
   if(b.rawAnchors&&Object.values(b.rawAnchors).some(a=>!Number.isFinite(Date.parse(a.at))||!Number.isSafeInteger(a.cost)||a.cost<0))throw new Error('实际消费基线无效');
   if(value.orderVersion!==undefined&&(!Number.isSafeInteger(value.orderVersion)||value.orderVersion<0))throw new Error('排序版本无效');
   if(value.accessOrderVersion!==undefined&&(!Number.isSafeInteger(value.accessOrderVersion)||value.accessOrderVersion<0))throw new Error('登录密钥排序版本无效');

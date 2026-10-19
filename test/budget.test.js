@@ -13,7 +13,7 @@ function setup(iso='2026-09-18T10:00:00+08:00') {
   state.configuredKeys=all.slice(0,2).map(k=>({id:String(k.id),keyHash:hashKey(k.key),maskedKey:'sk-***'}));
   const costs={1:30,2:20,3:90},calls=[],records=[];
   const store={getState:()=>structuredClone(state),saveState:async s=>{state=structuredClone(s)}};
-  const upstream={listAllKeys:async()=>{calls.push(['list']);if(failRead)throw Error('offline');return structuredClone(all)},
+  const upstream={listAllKeys:async()=>{calls.push(['list']);if(failRead)throw failRead instanceof Error?failRead:Error('offline');return structuredClone(all)},
     getKey:async id=>{calls.push(['key',id]);if(failRead)throw failRead instanceof Error?failRead:Error('offline');return structuredClone(all.find(key=>key.id===id))},
     getUsageRecords:async(id,start,end)=>{if(failRead)throw Error('offline');return structuredClone(records.filter(r=>r.apiKeyId===id&&r.at>=start&&r.at<end))},
     getUsageForKey:async id=>{calls.push(['usage',id]);if(failRead)throw Error('offline');return Object.fromEntries(['yesterday','today','week','month','lastMonth'].map(p=>[p,{cost:costs[id],requests:1}]))},
@@ -21,7 +21,7 @@ function setup(iso='2026-09-18T10:00:00+08:00') {
     updateKeyQuota:async(id,quota)=>{calls.push(['quota',id,quota]);all.find(k=>k.id===id).quota=quota},
     resetKey:async id=>{calls.push(['reset',id]);all.find(k=>k.id===id).quota_used=0}};
   let manager=new KeyManager({store,upstream,clock:()=>now,scheduleOffset:()=>offset});
-  return {get m(){return manager},get state(){return state},all,costs,calls,records,upstream,
+  return {get m(){return manager},get state(){return state},all,costs,calls,records,upstream,store,
     offset:value=>{offset=value},
     at:iso=>{now=new Date(iso)},advance:ms=>{now=new Date(now.getTime()+ms)},
     failRead:v=>{failRead=v},failWrite:id=>{failWrite=id},
@@ -92,8 +92,8 @@ test('new key counts existing current month consumption immediately',async()=>{
 test('views and simultaneous refreshes share cache with global throttle',async()=>{
   const f=setup();await Promise.all([f.m.refresh(),f.m.refresh(),f.m.refresh()]);
   const n=f.calls.length;f.m.view();await f.m.refresh();assert.equal(f.calls.length,n);
-  f.advance(FIVE_MINUTES);await f.m.refresh();assert.equal(f.calls.filter(c=>c[0]==='list').length,1);
-  assert.deepEqual(f.calls.filter(c=>c[0]==='key').map(c=>c[1]),[1,2]);
+  f.advance(FIVE_MINUTES);await f.m.refresh();assert.equal(f.calls.filter(c=>c[0]==='list').length,2);
+  assert.equal(f.calls.filter(c=>c[0]==='key').length,0);
 });
 test('night pauses consumption reads even when above 95 percent',async()=>{
   const f=setup('2026-09-18T21:59:00+08:00');f.costs[1]=75;await f.m.setBudget(100);const n=f.calls.length;
@@ -134,12 +134,12 @@ test('normal failures retain cache, log safe connection details and record a lat
   assert.ok(f.m.view().budget.lastSuccessAt>last);assert.equal(f.m.syncView().inProgress,false);
 });
 
-test('normal sync does not query unrelated keys and identity mismatch never triggers a full scan',async()=>{
+test('batch list matches only owned identities and never queries individual keys or unrelated usage',async()=>{
   const f=setup();await f.m.refresh();f.calls.length=0;f.advance(FIVE_MINUTES);await f.m.refresh();
-  assert.deepEqual(f.calls.filter(c=>c[0]==='key'||c[0]==='usage'),[['key',1],['key',2],['usage',1],['usage',2]]);
+  assert.deepEqual(f.calls,[['list'],['usage',1],['usage',2]]);
   const last=f.m.view().budget.lastSuccessAt;
   f.all[0].key='sk-different-owner-123456';f.calls.length=0;f.advance(FIVE_MINUTES);await f.m.refresh();
-  assert.equal(f.calls.filter(c=>c[0]==='list').length,0);assert.equal(f.calls.filter(c=>c[0]==='usage').length,0);
+  assert.equal(f.calls.filter(c=>c[0]==='list').length,1);assert.equal(f.calls.filter(c=>c[0]==='usage').length,0);
   assert.equal(f.m.view().budget.lastSuccessAt,last);assert.equal(f.m.syncView().events.at(-1).kind,'failed');
 });
 
@@ -163,16 +163,85 @@ test('state-change failures retain their underlying connection code and affected
   assert.equal(f.m.syncView().inProgress,false);
 });
 
-test('sync records remain bounded and quota save distinguishes a failed following read',async()=>{
+test('quota save updates cached quota without a following full sync or usage timestamp change',async()=>{
   const f=setup();await f.m.refresh();
   const last=f.m.view().budget.lastSuccessAt;
   const original=f.upstream.updateKeyQuota;
   f.upstream.updateKeyQuota=async(...args)=>{await original(...args);f.failRead(true)};
+  const before=f.calls.filter(c=>c[0]==='usage').length;
   const result=await f.m.quota('1',80);
-  assert.equal(result.quotaSaved,true);assert.equal(result.pendingSync,true);assert.equal(f.all[0].quota,80);
-  assert.equal(result.keys[0].quota,100);assert.equal(result.budget.lastSuccessAt,last);
+  assert.equal(result.quotaSaved,true);assert.equal(result.pendingSync,false);assert.equal(f.all[0].quota,80);
+  assert.equal(result.keys[0].quota,80);assert.equal(result.budget.lastSuccessAt,last);
+  assert.equal(f.calls.filter(c=>c[0]==='usage').length,before);
   for(let i=0;i<205;i++){f.advance(FIVE_MINUTES);await f.m.refresh();}
   assert.equal(f.m.syncView().events.length,200);
+});
+
+test('quota submits coalesce, conflicting amounts are rejected and failures allow a retry',async()=>{
+  const f=setup();await f.m.refresh();
+  let release;const wait=new Promise(resolve=>{release=resolve});
+  const original=f.upstream.updateKeyQuota;
+  f.upstream.updateKeyQuota=async(...args)=>{await wait;return original(...args)};
+  const first=f.m.quota('1',80),second=f.m.quota('1',80);
+  await assert.rejects(f.m.quota('1',90),error=>error.status===409);
+  release();await Promise.all([first,second]);
+  assert.equal(f.calls.filter(call=>call[0]==='quota').length,1);
+  f.upstream.updateKeyQuota=async()=>{throw new Error('write failed')};
+  await assert.rejects(f.m.quota('1',90));assert.equal(f.m.view().keys[0].quota,80);
+  f.upstream.updateKeyQuota=original;await f.m.quota('1',90);
+  assert.equal(f.m.view().keys[0].quota,90);
+});
+
+test('a cache write failure after confirmed upstream saving never reports the quota as unsaved',async()=>{
+  const f=setup();await f.m.refresh();const original=f.upstream.updateKeyQuota;
+  f.upstream.updateKeyQuota=async(...args)=>{await original(...args);f.store.saveState=async()=>{throw new Error('disk error')};};
+  const result=await f.m.quota('1',80);
+  assert.equal(result.quotaSaved,true);assert.equal(result.quotaCacheSaved,false);
+  assert.equal(result.keys[0].quota,80);assert.equal(f.all[0].quota,80);
+  assert.equal(f.m.view().keys[0].quota,100);
+});
+
+test('429 pauses attempts through restart and even month or weekly work cannot bypass the cooldown',async()=>{
+  const f=setup('2026-09-30T21:30:00+08:00');await f.m.refresh();
+  const error=Object.assign(new Error('limited'),{status:429,retryAfter:'7200'});
+  f.failRead(error);f.advance(FIVE_MINUTES);await f.m.refresh();
+  const until=f.m.view().budget.rateLimitedUntil;
+  assert.equal(until,'2026-10-01T00:00:00.000Z');
+  const calls=f.calls.length,events=f.m.syncView().events.length;
+  f.restart();await f.m.refresh();await f.m.tick();
+  f.at('2026-10-01T00:00:00+08:00');await f.m.tick();
+  await assert.rejects(f.m.quota('1',80),error=>error.status===429);
+  assert.equal(f.calls.length,calls);assert.equal(f.m.syncView().events.length,events);
+  assert.equal(f.m.view().budget.nextCheckAt,until);
+  f.failRead(false);f.at('2026-10-01T08:00:00+08:00');await f.m.tick();
+  assert.ok(f.calls.length>calls);assert.equal(f.m.view().budget.rateLimitedUntil,null);
+  assert.equal(f.m.syncView().events.at(-1).kind,'recovered');
+});
+
+test('shared upstream cooldown is visible to another scope without a failed read of its own',async()=>{
+  const f=setup();await f.m.refresh();const n=f.calls.length;
+  f.upstream.rateLimitUntil=()=> '2026-09-18T03:00:00.000Z';
+  assert.equal(f.m.syncView().rateLimitedUntil,'2026-09-18T03:00:00.000Z');
+  const result=await f.m.refresh();assert.equal(result.rateLimited,true);
+  await f.m.tick();assert.equal(f.calls.length,n);
+});
+
+test('detail cursors reuse a complete legacy ledger and only advance audit state on a successful sync',async()=>{
+  const f=setup();f.costs[1]=1;f.costs[2]=0;
+  await f.m.setBudget(100,'trial');
+  f.records.push({id:'10',apiKeyId:1,at:'2026-09-18T02:01:00.000Z',cost:1});
+  f.advance(FIVE_MINUTES);await f.m.refresh();
+  const seen=[],original=f.upstream.getUsageRecords;
+  f.upstream.getUsageRecords=async(id,start,end,options)=>{seen.push([id,options.afterId]);return original(id,start,end)};
+  f.advance(FIVE_MINUTES);await f.m.refresh();assert.deepEqual(seen,[[1,10],[2,0]]);
+  const hash=f.state.configuredKeys[0].keyHash;
+  const baseline=f.state.budget.tracking[hash].lastFullCheckAt;
+  f.advance(8*86400000);f.upstream.getUsageRecords=async()=>{throw new Error('audit failed')};
+  await f.m.refresh();assert.equal(f.state.budget.tracking[hash].lastFullCheckAt,baseline);
+  assert.equal(f.m.view().budget.used,1);
+  seen.length=0;f.upstream.getUsageRecords=async(id,start,end,options)=>{seen.push([id,options.afterId]);return original(id,start,end)};
+  f.advance(FIVE_MINUTES);await f.m.refresh();assert.deepEqual(seen,[[1,0],[2,0]]);
+  assert.ok(f.state.budget.tracking[hash].lastFullCheckAt>baseline);
 });
 test('monthly block prevents weekly reset or quota edit reactivation',async()=>{
   const f=setup('2026-09-21T06:00:00+08:00');await f.m.setBudget(50);await f.m.tick();

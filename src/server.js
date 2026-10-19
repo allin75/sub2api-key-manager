@@ -23,6 +23,10 @@ await store.loadStore();
 if (!store.getState().accessKeys && safeEqual(adminPassword,superPassword)) throw new Error('首次登录密钥与超级管理员密码不能相同');
 await store.initializeAccessKeys(adminPassword);
 await store.initializeSyncSlots();
+upstream.configureSyncState({
+  read: store.getUpstreamCooldown,
+  write: async rateLimitedUntil => store.saveState({ ...store.getState(), upstreamSync: { rateLimitedUntil } })
+});
 if (store.getState().accessKeys.some(item => safeEqual(item.secret, superPassword))) throw new Error('登录密钥与超级管理员密码不能相同');
 const managers = new Map();
 let operationQueue = Promise.resolve();
@@ -33,10 +37,7 @@ function exclusive(operation) {
 }
 function getManager(id) {
   if (!managers.has(id)) {
-    const manager = new KeyManager({ store: store.scopedStore(id), upstream, scheduleOffset: () => {
-      const entries = store.getState().accessKeys.slice().sort((a,b) => a.syncSlot-b.syncSlot);
-      return Math.floor(entries.findIndex(entry => entry.id === id)*60/Math.max(6,entries.length));
-    } });
+    const manager = new KeyManager({ store: store.scopedStore(id), upstream });
     // All scopes and credential changes share one queue to avoid lost updates.
     manager.exclusive = exclusive;
     managers.set(id, manager);
@@ -59,9 +60,10 @@ const server = http.createServer(async (request, response) => {
     await serveStatic(response, url.pathname);
   } catch (error) {
     const status = error instanceof UpstreamError
-      ? (error.status === 503 ? 503 : 502)
+      ? ([429,503].includes(error.status) ? error.status : 502)
       : (error instanceof HttpError || error instanceof ManagerError ? error.status : 500);
     if (status >= 500) console.error('[request]', error.message);
+    if(status===429&&error.retryAt)response.setHeader('Retry-After',String(Math.max(1,Math.ceil((Date.parse(error.retryAt)-Date.now())/1000))));
     sendJson(response, status, { error: status >= 500 && !(error instanceof UpstreamError) ? '服务器内部错误' : error.message });
   }
 });
@@ -74,7 +76,12 @@ const runTick = async () => {
   if (ticking) return;
   ticking = true;
   try {
-    for (const entry of store.getState().accessKeys) await getManager(entry.id).tick();
+    await upstream.withKeySnapshot(async () => {
+      for (const entry of store.getState().accessKeys) {
+        if(upstream.rateLimitUntil())break;
+        await getManager(entry.id).tick();
+      }
+    });
   } catch { console.error('[scheduler] State operation failed'); }
   finally { ticking = false; }
 };

@@ -19,6 +19,17 @@ export function nextCheck(now, offsetMinutes=0, inclusive=false) {
   if(candidate>=day+22*3600000) candidate=day+86400000+(480+offset)*60000;
   return new Date(candidate).toISOString();
 }
+
+export function rateLimitNextCheck(now, retryAfter) {
+  let earliest = now.getTime();
+  if (typeof retryAfter === 'string' && retryAfter.trim()) {
+    const seconds = Number(retryAfter);
+    const parsed = Number.isFinite(seconds) && seconds >= 0 ? now.getTime() + seconds * 1000 : Date.parse(retryAfter);
+    if (Number.isFinite(parsed)) earliest = Math.max(earliest, parsed);
+  }
+  const next = nextCheck(now);
+  return earliest <= Date.parse(next) ? next : nextCheck(new Date(earliest), 0, true);
+}
 export function micros(cost) {
   const value=Number(cost);
   if(cost===null || cost===undefined || !Number.isFinite(value) || value<0 || !Number.isSafeInteger(Math.round(value*1e6))) throw new Error('上游消费金额无效');

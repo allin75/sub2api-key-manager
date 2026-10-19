@@ -171,6 +171,11 @@ html { scrollbar-gutter:stable; }
 .budget-blocked { color:#ff9ca5; }
 .sync-status { color:var(--muted); font-size:0.6875rem; line-height:1.7; margin-bottom:1.125rem; }
 .sync-progress { margin:0 0 1rem; color:#b6cce8; font-size:0.75rem; line-height:1.7; }
+.quota-save-progress { margin:0.75rem 0 0; color:#b6cce8; font-size:0.75rem; line-height:1.7; }
+#saveQuotaButton.quota-saving { display:inline-flex; align-items:center; gap:0.5rem; cursor:wait; opacity:1; }
+#saveQuotaButton.quota-saving::before { content:''; width:0.8em; height:0.8em; border:2px solid currentColor; border-right-color:transparent; border-radius:50%; animation:quota-save-spin 0.9s linear infinite; }
+@keyframes quota-save-spin { to { transform:rotate(360deg); } }
+@media(prefers-reduced-motion:reduce) { #saveQuotaButton.quota-saving::before { animation:none; } }
 #refreshButton { position:relative; overflow:hidden; isolation:isolate; }
 #refreshButton.sync-refreshing::before { content:''; position:absolute; inset:0; z-index:-1; background:linear-gradient(90deg,transparent,#739dff66,transparent); transform:translateX(-100%); animation:sync-button-sweep 1.4s linear infinite; pointer-events:none; }
 #refreshButton.sync-refreshing:disabled { opacity:1; cursor:wait; }

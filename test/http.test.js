@@ -21,6 +21,7 @@ test('usage detail pagination validates upstream data, deduplicates and respects
   });
   mock.listen(0,'127.0.0.1');await once(mock,'listening');
   const prior={...process.env};
+  process.env.UPSTREAM_MIN_INTERVAL_MS='0';
   try{
     process.env.SUB2API_BASE_URL=`http://127.0.0.1:${mock.address().port}`;
     process.env.SUB2API_EMAIL='mock@example.invalid';process.env.SUB2API_PASSWORD='mock';
@@ -34,7 +35,7 @@ test('usage detail pagination validates upstream data, deduplicates and respects
       payloads=[bad];await assert.rejects(read());
     }
   }finally{
-    for(const key of ['SUB2API_BASE_URL','SUB2API_EMAIL','SUB2API_PASSWORD']){if(prior[key]===undefined)delete process.env[key];else process.env[key]=prior[key];}
+    for(const key of ['SUB2API_BASE_URL','SUB2API_EMAIL','SUB2API_PASSWORD','UPSTREAM_MIN_INTERVAL_MS']){if(prior[key]===undefined)delete process.env[key];else process.env[key]=prior[key];}
     mock.closeAllConnections();await new Promise(resolve=>mock.close(resolve));
   }
 });
@@ -45,13 +46,14 @@ test('HTTP roles, CSRF, cache, and budget enforcement through mock Sub2API',asyn
   const otherKey={id:2,key:'sk-second-only-123456789012',name:'Second mock',status:'active',quota:100,quota_used:2};
   const upstreamKeys=[key,otherKey];
   const usageRecords=[];
-  let loginCount=0,readCount=0,failSecondUsageAfter=null;
+  let loginCount=0,readCount=0,failSecondUsageAfter=null,limited=false;
   const mock=http.createServer(async(req,res)=>{
     let raw='';for await(const c of req)raw+=c;const body=JSON.parse(raw||'{}');let data;
+    if(limited){res.writeHead(429,{'Retry-After':'7200'});res.end('limited');return;}
     if(req.url==='/api/v1/auth/login'){loginCount++;data={access_token:'test-token',expires_in:3600};}
     else if(req.url.startsWith('/api/v1/keys?')){readCount++;data={items:upstreamKeys,pages:1};}
     else if(/^\/api\/v1\/keys\/[12]$/.test(req.url)&&req.method==='GET'){data=upstreamKeys.find(k=>k.id===Number(req.url.split('/').pop()));}
-    else if(req.url.startsWith('/api/v1/usage?')){const url=new URL(req.url,'http://localhost');data={items:usageRecords.filter(r=>r.api_key_id===Number(url.searchParams.get('api_key_id'))),pages:1};}
+    else if(req.url.startsWith('/api/v1/usage?')){const url=new URL(req.url,'http://localhost');data={items:usageRecords.filter(r=>r.api_key_id===Number(url.searchParams.get('api_key_id'))).sort((a,b)=>url.searchParams.get('sort_order')==='desc'?b.id-a.id:a.id-b.id),pages:1};}
     else if(/^\/api\/v1\/user\/api-keys\/[12]\/usage\/daily/.test(req.url)){
       if(req.url.includes('/api-keys/2/')&&failSecondUsageAfter!==null&&--failSecondUsageAfter===0){failSecondUsageAfter=null;res.writeHead(503);res.end('{}');return;}
       const today=new Date(Date.now()+8*3600000).toISOString().slice(0,10);
@@ -61,7 +63,7 @@ test('HTTP roles, CSRF, cache, and budget enforcement through mock Sub2API',asyn
     res.setHeader('Content-Type','application/json');res.end(JSON.stringify({code:0,data}));
   });
   mock.listen(0,'127.0.0.1');await once(mock,'listening');
-  const child=spawn(process.execPath,['src/server.js'],{cwd:new URL('..',import.meta.url),env:{...process.env,PORT:'0',DATA_DIR:directory,ADMIN_PASSWORD:'111',SUPERADMIN_PASSWORD:'superadmin',SUB2API_BASE_URL:`http://127.0.0.1:${mock.address().port}`,SUB2API_EMAIL:'test@example.invalid',SUB2API_PASSWORD:'test',COOKIE_SECURE:'false'},stdio:['ignore','pipe','pipe']});
+  const child=spawn(process.execPath,['src/server.js'],{cwd:new URL('..',import.meta.url),env:{...process.env,PORT:'0',UPSTREAM_MIN_INTERVAL_MS:'0',DATA_DIR:directory,ADMIN_PASSWORD:'111',SUPERADMIN_PASSWORD:'superadmin',SUB2API_BASE_URL:`http://127.0.0.1:${mock.address().port}`,SUB2API_EMAIL:'test@example.invalid',SUB2API_PASSWORD:'test',COOKIE_SECURE:'false'},stdio:['ignore','pipe','pipe']});
   try{
     const port=await new Promise((resolve,reject)=>{
       const timer=setTimeout(()=>reject(Error('Server startup timeout')),10000);
@@ -227,6 +229,17 @@ test('HTTP roles, CSRF, cache, and budget enforcement through mock Sub2API',asyn
     assert.equal(policyState.accessKeys.find(e=>e.id===accessKeys[0].id).state.budget.monthlyResetEnabled,false);
     const raw=await fs.readFile(path.join(directory,'state.json'),'utf8');assert.ok(!raw.includes(key.key));
     assert.ok(!raw.includes(otherKey.key));
+    limited=true;
+    const rejected=await request('/api/keys','POST',{customKey:'sk-new-only-limited-123456'},superadmin);
+    assert.equal(rejected.status,429);assert.ok(Number(rejected.headers.get('retry-after'))>0);
+    const cooling=JSON.parse(await fs.readFile(path.join(directory,'state.json'),'utf8'));
+    const until=cooling.upstreamSync.rateLimitedUntil;
+    assert.ok(Date.parse(until)>Date.now());
+    const scopes=await Promise.all([request('/api/sync-status','GET',undefined,superadmin),request(scoped('/api/sync-status'),'GET',undefined,superadmin)]);
+    for(const response of scopes){const status=await response.json();assert.equal(status.rateLimitedUntil,until);assert.equal(status.nextCheckAt,until);}
+    const cached=await (await request('/api/refresh','POST',undefined,renamedSession)).json();
+    assert.equal(cached.rateLimited,true);assert.equal(cached.budget.rateLimitedUntil,until);
+    assert.equal((await request('/api/keys/'+id,'PUT',{quota:99},renamedSession)).status,429);
   }finally{
     const exited=once(child,'exit');child.kill();await exited;
     mock.closeAllConnections();await new Promise(resolve=>mock.close(resolve));
