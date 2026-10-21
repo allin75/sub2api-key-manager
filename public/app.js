@@ -664,11 +664,19 @@ async function saveAccess(event){
   finally{setBusy(elements.saveAccessButton,false,'保存');}
 }
 
+function renderUsagePeriods(key) {
+  return usagePeriods.map(([id,label])=>{
+    const usage=key.usage?.[id],cost=Number(usage?.cost);
+    const tone=id==='today'&&Number.isFinite(cost)?cost>20?'usage-today-hot':cost>10?'usage-today-warm':'':'';
+    return `<div class="period"><span>${label}</span><strong${tone?` class="${tone}"`:''}>${usage?money(usage.cost):'—'}</strong></div>`;
+  }).join('');
+}
+
 function renderKeys() {
   if(!state.keys.length){closeUsagePreview();elements.keyGrid.innerHTML='<div class="empty"><strong>尚未配置自定义 Key</strong><br>请由超级管理员添加 Key。</div>';return;}
   elements.keyGrid.innerHTML=state.keys.map((key,index)=>{
     if(!key.matched) return `<article class="key-card"><div class="card-head"><div class="key-title"><div class="key-number">${pad(index+1)}</div><div><div class="key-name">未匹配 Key</div><div class="key-value">${escapeHtml(key.maskedKey)}</div></div></div><span class="status missing">未找到</span></div><div class="card-error">${escapeHtml(key.error||'无法匹配')}</div><div class="card-footer"><span>不会参与重置</span><button class="remove" data-remove="${key.id}">移除</button></div></article>`;
-    const periods=usagePeriods.map(([id,label])=>`<div class="period"><span>${label}</span><strong>${key.usage?.[id]?money(key.usage[id].cost):'—'}</strong></div>`).join('');
+    const periods=renderUsagePeriods(key);
     return `<article class="key-card"><div class="card-head"><div class="key-title"><div class="key-number">${pad(index+1)}</div><div><div class="key-name">${escapeHtml(key.name)}</div><div class="key-value">${escapeHtml(key.maskedKey)}</div></div></div><span class="status ${key.status==='active'?'active':'missing'}">${key.status==='active'?'正常':escapeHtml(key.status||'未知')}</span></div><div class="periods">${periods}</div>${renderQuota(key)}${key.error?`<div class="card-error">用量读取失败：${escapeHtml(key.error)}</div>`:''}<div class="card-footer"><span>最后使用：${formatTime(key.lastUsedAt)}</span><button class="remove" data-remove="${key.id}">移除</button></div></article>`;
   }).join('');
   document.querySelectorAll('[data-remove]').forEach(button=>button.addEventListener('click',()=>removeKey(button.dataset.remove)));

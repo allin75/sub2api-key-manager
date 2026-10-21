@@ -287,6 +287,14 @@ html { scrollbar-gutter:stable; }
   }
 }
 
+.period strong.usage-today-warm { color:#f5ce73; text-shadow:0 0 0.625rem #f5b74366; }
+.period strong.usage-today-hot { color:#ff8e9a; text-shadow:0 0 0.5rem #ff657866; animation:usage-today-ember 3.8s ease-in-out infinite; }
+@keyframes usage-today-ember {
+  0%,100% { text-shadow:0 0 0.5rem #ff657855; }
+  50% { text-shadow:0 0 0.875rem #ff657899; }
+}
+@media (prefers-reduced-motion:reduce) { .period strong.usage-today-hot { animation:none; } }
+
 @media (max-width: 1200px) {
   .periods {
     grid-template-columns: repeat(3, minmax(0, 1fr));
