@@ -1,32 +1,68 @@
 /* Preview only: not linked by the production page. */
+@property --usage-tile-angle {
+  syntax:'<angle>';
+  initial-value:0deg;
+  inherits:false;
+}
+
 .period:has(> strong.usage-today-warm) {
+  --usage-tile-edge:#ffe6a1;
+  --usage-tile-aura:#ffbe4270;
+  --usage-tile-speed:4.8s;
   border-color:#a77c35;
   background:radial-gradient(ellipse at 12% 0%,#e8ac3338,transparent 85%),#111a29;
   box-shadow:inset 0 0 0.75rem #e8ac3314,0 0 0.875rem #e8ac3333;
 }
 
 .period:has(> strong.usage-today-hot) {
-  position:relative;
+  --usage-tile-edge:#ffc5cf;
+  --usage-tile-aura:#ff5c7a99;
+  --usage-tile-speed:3.4s;
   border-color:#c75e6c;
   background:radial-gradient(ellipse at 12% 0%,#ff65783b,transparent 85%),#1a1626;
   box-shadow:inset 0 0 0.75rem #ff65781a;
 }
 
-.period:has(> strong.usage-today-hot)::after {
+.period:has(> strong:is(.usage-today-warm,.usage-today-hot)) {
+  position:relative;
+  isolation:isolate;
+}
+
+.period:has(> strong:is(.usage-today-warm,.usage-today-hot))::before {
   content:'';
   position:absolute;
   inset:-1px;
   border-radius:inherit;
-  box-shadow:0 0 1rem #ff65785c;
+  padding:2px;
+  background:conic-gradient(from var(--usage-tile-angle),transparent 0% 58%,#ffffff18 70%,var(--usage-tile-edge) 83%,#fff 86%,transparent 92% 100%);
+  -webkit-mask:linear-gradient(#fff 0 0) content-box,linear-gradient(#fff 0 0);
+  -webkit-mask-composite:xor;
+  mask:linear-gradient(#fff 0 0) content-box,linear-gradient(#fff 0 0);
+  mask-composite:exclude;
   pointer-events:none;
-  animation:usage-today-tile-halo 3.8s ease-in-out infinite;
+  animation:usage-today-tile-orbit var(--usage-tile-speed) linear infinite;
+}
+
+.period:has(> strong:is(.usage-today-warm,.usage-today-hot))::after {
+  content:'';
+  position:absolute;
+  inset:-1px;
+  border-radius:inherit;
+  box-shadow:0 0 0.875rem var(--usage-tile-aura),0 0 1.5rem var(--usage-tile-aura);
+  pointer-events:none;
+  animation:usage-today-tile-halo var(--usage-tile-speed) ease-in-out infinite;
+}
+
+@keyframes usage-today-tile-orbit {
+  to { --usage-tile-angle:360deg; }
 }
 
 @keyframes usage-today-tile-halo {
-  0%,100% { opacity:0.55; }
-  50% { opacity:1; }
+  0%,100% { opacity:0.3; }
+  50% { opacity:0.85; }
 }
 
 @media (prefers-reduced-motion:reduce) {
-  .period:has(> strong.usage-today-hot)::after { animation:none; opacity:0.75; }
+  .period:has(> strong:is(.usage-today-warm,.usage-today-hot))::before { animation:none; background:var(--usage-tile-edge); opacity:0.65; }
+  .period:has(> strong:is(.usage-today-warm,.usage-today-hot))::after { animation:none; opacity:0.5; }
 }
