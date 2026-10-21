@@ -69,7 +69,7 @@ test('production yesterday start times are isolated per account and survive swit
   assert.equal(h.tile.properties.get('--usage-yesterday-delay'), '0ms');
   h.setAccount('account-a'); h.rebuild(); h.decorate();
   assert.equal(h.tile.properties.get('--usage-yesterday-delay'), '-6000ms');
-  assert.match(source, /function showLogin\(\)\s*\{\s*yesterdayEffectStarts.clear\(\);/);
+  assert.match(source, /function showLogin\(\)\s*\{\s*rememberAccessSelection\(''\);\s*yesterdayEffectStarts.clear\(\);/);
 });
 
 test('production effects retain persistent orbit clocks, fading peaks and reduced motion', () => {

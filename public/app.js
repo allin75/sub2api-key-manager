@@ -2,6 +2,7 @@ const state = { csrfToken: '', keys: [], schedule: null, budget:null, role:'admi
 const budgetNotified = new Set();
 const yesterdayEffectStarts = new Map();
 const yesterdayEffectDuration = 10000;
+const selectedAccessStorageKey = 'sub2api-selected-access';
 const usagePeriods = [['today', '今日'], ['yesterday', '昨日'], ['week', '本周'], ['lastWeek', '上周'], ['month', '本月'], ['lastMonth', '上月']];
 const elements = Object.fromEntries(['loginScreen','loginForm','loginError','password','app','logoutButton','refreshButton','resetCountdown','openAddButton','usageSummary','keyGrid','addOverlay','addForm','customKey','addError','closeAddButton','cancelAddButton','quotaOverlay','quotaForm','quotaInput','quotaError','quotaDescription','closeQuotaButton','cancelQuotaButton','toast'].map(id => [id, document.getElementById(id)]));
 
@@ -440,6 +441,18 @@ elements.cancelQuotaButton.addEventListener('click', closeQuota);
 elements.quotaOverlay.addEventListener('click', event => { if(event.target===elements.quotaOverlay) closeQuota(); });
 elements.quotaForm.addEventListener('submit', updateQuota);
 
+function readAccessSelection() {
+  try { return sessionStorage.getItem(selectedAccessStorageKey) || ''; }
+  catch { return ''; }
+}
+
+function rememberAccessSelection(id) {
+  try {
+    if (id) sessionStorage.setItem(selectedAccessStorageKey, id);
+    else sessionStorage.removeItem(selectedAccessStorageKey);
+  } catch {}
+}
+
 async function enterApp(session, fromLogin = false) {
   const version = ++viewVersion;
   cancelUiAnimations();
@@ -448,7 +461,7 @@ async function enterApp(session, fromLogin = false) {
   state.role=session.role;
   state.accessKey=session.accessKey;
   state.accessKeys=[];
-  state.selectedAccessId=session.accessKey?.id||'';
+  state.selectedAccessId=session.role==='superadmin'?readAccessSelection():session.accessKey?.id||'';
   state.policyAnnouncement = session.announcement || null;
   state.notices = session.notices || [];
   state.announcement = pendingAnnouncement() || state.policyAnnouncement;
@@ -471,6 +484,7 @@ async function enterApp(session, fromLogin = false) {
 }
 
 function showLogin() {
+  rememberAccessSelection('');
   yesterdayEffectStarts.clear();
   viewVersion++;
   loginAttempt++;
@@ -510,6 +524,7 @@ async function loadKeys(showMessage=false) {
       state.accessKeys=list.accessKeys;
       state.accessOrderVersion=list.orderVersion;
       if(!state.accessKeys.some(entry=>entry.id===state.selectedAccessId))state.selectedAccessId=state.accessKeys[0]?.id||'';
+      rememberAccessSelection(state.selectedAccessId);
       renderAccessKeys();
     }
     const data=await api(showMessage?'/api/refresh':'/api/keys',showMessage?{method:'POST'}:{});
@@ -621,6 +636,7 @@ async function selectAccess(id){
   closeUsagePreview();
   resetSyncUi();
   state.selectedAccessId=id;state.keys=[];state.budget=null;state.rewards=[];renderRewards();
+  if(state.role==='superadmin')rememberAccessSelection(id);
   elements.usageSummary.innerHTML='';elements.budgetStatus.textContent='';elements.syncStatus.textContent='';
   renderCurrentAccess();renderAccessKeys();
   await loadKeys();
