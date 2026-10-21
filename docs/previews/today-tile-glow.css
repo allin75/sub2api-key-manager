@@ -1,0 +1,32 @@
+/* Preview only: not linked by the production page. */
+.period:has(> strong.usage-today-warm) {
+  border-color:#a77c35;
+  background:radial-gradient(ellipse at 12% 0%,#e8ac3338,transparent 85%),#111a29;
+  box-shadow:inset 0 0 0.75rem #e8ac3314,0 0 0.875rem #e8ac3333;
+}
+
+.period:has(> strong.usage-today-hot) {
+  position:relative;
+  border-color:#c75e6c;
+  background:radial-gradient(ellipse at 12% 0%,#ff65783b,transparent 85%),#1a1626;
+  box-shadow:inset 0 0 0.75rem #ff65781a;
+}
+
+.period:has(> strong.usage-today-hot)::after {
+  content:'';
+  position:absolute;
+  inset:-1px;
+  border-radius:inherit;
+  box-shadow:0 0 1rem #ff65785c;
+  pointer-events:none;
+  animation:usage-today-tile-halo 3.8s ease-in-out infinite;
+}
+
+@keyframes usage-today-tile-halo {
+  0%,100% { opacity:0.55; }
+  50% { opacity:1; }
+}
+
+@media (prefers-reduced-motion:reduce) {
+  .period:has(> strong.usage-today-hot)::after { animation:none; opacity:0.75; }
+}
