@@ -16,7 +16,7 @@ const keys = ['Research', 'Coding', 'Writing', 'Automation'].map((name, i) => ({
   usage: {
     daily: [3, 6, 8, 12, 15, 4, 7].map((cost, j) => ({ date: `2026-10-${String(j + 15).padStart(2, '0')}`, cost })),
     ...Object.fromEntries(['today', 'yesterday', 'week', 'lastWeek', 'month', 'lastMonth'].map((id, j) => [id, {
-      cost: j === 0 ? [16.94, 35.46, 8.50, 20][i] : [0, 35.46, 52.70, 140.38, 325.64, 586.14][j]
+      cost: j === 0 ? [16.94, 35.46, 8.50, 20][i] : j === 1 ? [13.62, 28.75, 7.20, 20][i] : [0, 0, 52.70, 140.38, 325.64, 586.14][j]
     }]))
   }
 }));
@@ -37,10 +37,23 @@ export function createPreviewServer() {
       return response.end(JSON.stringify({ notices: [] }));
     }
     try {
+      if (url.pathname === '/preview/yesterday-effect.mjs') {
+        response.setHeader('Content-Type', 'text/javascript');
+        return response.end(await fs.readFile(new URL('yesterday-effect.mjs', import.meta.url)));
+      }
       const name = url.pathname === '/' ? 'index.html' : url.pathname.slice(1);
       const file = path.resolve(root, 'public', name);
       if (!file.startsWith(path.resolve(root, 'public') + path.sep)) throw new Error('Invalid path');
       let body = await fs.readFile(file);
+      if (name === 'index.html') {
+        body = Buffer.from(body.toString().replace('</head>', '<script type="module" src="/preview/yesterday-effect.mjs"></script></head>'));
+      }
+      if (name === 'app.js') {
+        const marker = 'return `<div class="period"><span>${label}';
+        const source = body.toString();
+        if (!source.includes(marker)) throw new Error('Preview renderer marker missing');
+        body = Buffer.from(source.replace(marker, 'return `<div class="period" data-usage-period="${id}" data-usage-cost="${Number.isFinite(cost)?cost:\'\'}"><span>${label}'));
+      }
       if (name === 'overrides.css' && !url.searchParams.has('baseline')) {
         body = Buffer.concat([body, Buffer.from('\n'), await fs.readFile(new URL('today-tile-glow.css', import.meta.url))]);
       }
