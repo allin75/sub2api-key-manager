@@ -1,11 +1,23 @@
 /* Preview only: not linked by the production page. */
-@property --usage-tile-angle {
+@property --usage-warm-angle {
   syntax:'<angle>';
   initial-value:0deg;
-  inherits:false;
+  inherits:true;
+}
+
+@property --usage-hot-angle {
+  syntax:'<angle>';
+  initial-value:0deg;
+  inherits:true;
+}
+
+/* Keep clocks on the persistent grid so rebuilding a tile cannot restart them. */
+.key-grid {
+  animation:usage-today-warm-orbit 4.8s linear infinite,usage-today-hot-orbit 3.4s linear infinite;
 }
 
 .period:has(> strong.usage-today-warm) {
+  --usage-tile-angle:var(--usage-warm-angle);
   --usage-tile-edge:#ffe6a1;
   --usage-tile-aura:#ffbe4270;
   --usage-tile-speed:4.8s;
@@ -15,6 +27,7 @@
 }
 
 .period:has(> strong.usage-today-hot) {
+  --usage-tile-angle:var(--usage-hot-angle);
   --usage-tile-edge:#ffc5cf;
   --usage-tile-aura:#ff5c7a99;
   --usage-tile-speed:3.4s;
@@ -40,7 +53,6 @@
   mask:linear-gradient(#fff 0 0) content-box,linear-gradient(#fff 0 0);
   mask-composite:exclude;
   pointer-events:none;
-  animation:usage-today-tile-orbit var(--usage-tile-speed) linear infinite;
 }
 
 .period:has(> strong:is(.usage-today-warm,.usage-today-hot))::after {
@@ -53,8 +65,14 @@
   animation:usage-today-tile-halo var(--usage-tile-speed) ease-in-out infinite;
 }
 
-@keyframes usage-today-tile-orbit {
-  to { --usage-tile-angle:360deg; }
+@keyframes usage-today-warm-orbit {
+  from { --usage-warm-angle:0deg; }
+  to { --usage-warm-angle:360deg; }
+}
+
+@keyframes usage-today-hot-orbit {
+  from { --usage-hot-angle:0deg; }
+  to { --usage-hot-angle:360deg; }
 }
 
 @keyframes usage-today-tile-halo {
@@ -63,6 +81,7 @@
 }
 
 @media (prefers-reduced-motion:reduce) {
+  .key-grid { animation:none; }
   .period:has(> strong:is(.usage-today-warm,.usage-today-hot))::before { animation:none; background:var(--usage-tile-edge); opacity:0.65; }
   .period:has(> strong:is(.usage-today-warm,.usage-today-hot))::after { animation:none; opacity:0.5; }
 }
