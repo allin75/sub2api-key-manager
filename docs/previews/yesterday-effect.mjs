@@ -1,10 +1,11 @@
-export const yesterdayEffectDuration = 5000;
+export const yesterdayEffectDuration = 10000;
 
 export function yesterdayEffectFrame(cost, startedAt, now) {
   if (!Number.isFinite(cost) || cost <= 10) return null;
   const elapsed = Math.max(0, now - startedAt);
-  if (!Number.isFinite(elapsed) || elapsed >= yesterdayEffectDuration) return null;
-  return { tone: cost > 20 ? 'hot' : 'warm', delayMs: elapsed === 0 ? 0 : -elapsed };
+  if (!Number.isFinite(elapsed)) return null;
+  const phase = elapsed % yesterdayEffectDuration;
+  return { tone: cost > 20 ? 'hot' : 'warm', delayMs: phase === 0 ? 0 : -phase };
 }
 
 export function mountYesterdayEffects(document, now = () => performance.now()) {
@@ -30,12 +31,9 @@ export function mountYesterdayEffects(document, now = () => performance.now()) {
       clear(tile);
       tile.style.setProperty('--usage-yesterday-delay', `${frame.delayMs}ms`);
       tile.classList.add(className);
-      tile.addEventListener('animationend', event => {
-        if (event.target === tile && event.animationName === 'usage-yesterday-fade') clear(tile);
-      }, { once: true });
     }
   };
-  // Retain start times outside the replaceable card DOM, including after the effect ends.
+  // Retain start times outside the replaceable card DOM, including quiet phases.
   const observer = new MutationObserver(decorate);
   observer.observe(grid, { childList: true });
   decorate();

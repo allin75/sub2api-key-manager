@@ -1,5 +1,7 @@
 const state = { csrfToken: '', keys: [], schedule: null, budget:null, role:'admin', accessKey:null, accessKeys:[], selectedAccessId:'', loadVersion:0, rewards:[], keyOrderVersion:0, accessOrderVersion:0, sorting:false, policySaving:false, announcement:null };
 const budgetNotified = new Set();
+const yesterdayEffectStarts = new Map();
+const yesterdayEffectDuration = 10000;
 const usagePeriods = [['today', '今日'], ['yesterday', '昨日'], ['week', '本周'], ['lastWeek', '上周'], ['month', '本月'], ['lastMonth', '上月']];
 const elements = Object.fromEntries(['loginScreen','loginForm','loginError','password','app','logoutButton','refreshButton','resetCountdown','openAddButton','usageSummary','keyGrid','addOverlay','addForm','customKey','addError','closeAddButton','cancelAddButton','quotaOverlay','quotaForm','quotaInput','quotaError','quotaDescription','closeQuotaButton','cancelQuotaButton','toast'].map(id => [id, document.getElementById(id)]));
 
@@ -469,6 +471,7 @@ async function enterApp(session, fromLogin = false) {
 }
 
 function showLogin() {
+  yesterdayEffectStarts.clear();
   viewVersion++;
   loginAttempt++;
   cancelUiAnimations();
@@ -664,11 +667,38 @@ async function saveAccess(event){
   finally{setBusy(elements.saveAccessButton,false,'保存');}
 }
 
+function yesterdayEffectFrame(cost, startedAt, now) {
+  if (!Number.isFinite(cost) || cost <= 10) return null;
+  const elapsed = Math.max(0, now - startedAt);
+  if (!Number.isFinite(elapsed)) return null;
+  const phase = elapsed % yesterdayEffectDuration;
+  return { tone: cost > 20 ? 'hot' : 'warm', delayMs: phase === 0 ? 0 : -phase };
+}
+
+function decorateYesterdayEffects() {
+  const accountId = currentAccess()?.id;
+  if (!accountId) return;
+  const keys = new Map(state.keys.map(key => [key.id, key]));
+  for (const card of elements.keyGrid.querySelectorAll('.key-card[data-sort-id]')) {
+    const tile = card.querySelector('[data-usage-period="yesterday"]');
+    if (!tile) continue;
+    const cost = Number(keys.get(card.dataset.sortId)?.usage?.yesterday?.cost);
+    const id = JSON.stringify([accountId, card.dataset.sortId]);
+    const now = performance.now();
+    // Start times outlive card rebuilds and account switches within this session.
+    if (!yesterdayEffectStarts.has(id) && yesterdayEffectFrame(cost, now, now)) yesterdayEffectStarts.set(id, now);
+    const frame = yesterdayEffectStarts.has(id) ? yesterdayEffectFrame(cost, yesterdayEffectStarts.get(id), now) : null;
+    if (!frame) continue;
+    tile.style.setProperty('--usage-yesterday-delay', `${frame.delayMs}ms`);
+    tile.classList.add(`usage-yesterday-${frame.tone}`);
+  }
+}
+
 function renderUsagePeriods(key) {
   return usagePeriods.map(([id,label])=>{
     const usage=key.usage?.[id],cost=Number(usage?.cost);
     const tone=id==='today'&&Number.isFinite(cost)?cost>20?'usage-today-hot':cost>10?'usage-today-warm':'':'';
-    return `<div class="period"><span>${label}</span><strong${tone?` class="${tone}"`:''}>${usage?money(usage.cost):'—'}</strong></div>`;
+    return `<div class="period" data-usage-period="${id}"><span>${label}</span><strong${tone?` class="${tone}"`:''}>${usage?money(usage.cost):'—'}</strong></div>`;
   }).join('');
 }
 
@@ -689,6 +719,7 @@ function renderKeys() {
   if(state.budget?.type==='trial')elements.keyGrid.querySelectorAll('.quota-caption').forEach(el=>el.textContent='USD · 体验额度不参与每周重置；此处为上游 Key 的真实已用量');
   else if(!state.budget?.weeklyResetEnabled)elements.keyGrid.querySelectorAll('.quota-caption').forEach(el=>el.textContent='USD · 周刷新已关闭，累计用量不自动重置');
   mountSort(elements.keyGrid,state.keys.map(k=>k.id),'keys');
+  decorateYesterdayEffects();
   mountUsagePreview();
 }
 

@@ -91,7 +91,7 @@
 .period:is(.usage-yesterday-warm,.usage-yesterday-hot) {
   position:relative;
   isolation:isolate;
-  animation:usage-yesterday-fade 5s ease-in-out both;
+  animation:usage-yesterday-fade 10s ease-in-out infinite both;
   animation-delay:var(--usage-yesterday-delay,0ms);
 }
 .period:is(.usage-yesterday-warm,.usage-yesterday-hot)::after {
@@ -112,13 +112,13 @@
 }
 @keyframes usage-yesterday-fade {
   0% { --usage-yesterday-strength:0; }
-  8% { --usage-yesterday-strength:1; }
-  22% { --usage-yesterday-strength:0.18; }
-  36% { --usage-yesterday-strength:0.62; }
-  50% { --usage-yesterday-strength:0.1; }
-  64% { --usage-yesterday-strength:0.3; }
-  80% { --usage-yesterday-strength:0.06; }
-  100% { --usage-yesterday-strength:0; }
+  4% { --usage-yesterday-strength:1; }
+  11% { --usage-yesterday-strength:0.18; }
+  18% { --usage-yesterday-strength:0.62; }
+  25% { --usage-yesterday-strength:0.1; }
+  32% { --usage-yesterday-strength:0.3; }
+  40% { --usage-yesterday-strength:0.06; }
+  50%,100% { --usage-yesterday-strength:0; }
 }
 
 @media (prefers-reduced-motion:reduce) {

@@ -45,18 +45,7 @@ export function createPreviewServer() {
       const file = path.resolve(root, 'public', name);
       if (!file.startsWith(path.resolve(root, 'public') + path.sep)) throw new Error('Invalid path');
       let body = await fs.readFile(file);
-      if (name === 'index.html') {
-        body = Buffer.from(body.toString().replace('</head>', '<script type="module" src="/preview/yesterday-effect.mjs"></script></head>'));
-      }
-      if (name === 'app.js') {
-        const marker = 'return `<div class="period"><span>${label}';
-        const source = body.toString();
-        if (!source.includes(marker)) throw new Error('Preview renderer marker missing');
-        body = Buffer.from(source.replace(marker, 'return `<div class="period" data-usage-period="${id}" data-usage-cost="${Number.isFinite(cost)?cost:\'\'}"><span>${label}'));
-      }
-      if (name === 'overrides.css' && !url.searchParams.has('baseline')) {
-        body = Buffer.concat([body, Buffer.from('\n'), await fs.readFile(new URL('today-tile-glow.css', import.meta.url))]);
-      }
+      // Serve the production assets unchanged; only the API responses are fake.
       response.setHeader('Content-Type', name.endsWith('.js') ? 'text/javascript' : name.endsWith('.css') ? 'text/css' : 'text/html');
       response.end(body);
     } catch {

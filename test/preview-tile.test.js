@@ -23,22 +23,24 @@ test('preview polling fields match cached budget exactly to avoid five-second ti
   }
 });
 
-test('yesterday preview effect uses strict thresholds and ends after five seconds', () => {
-  assert.equal(yesterdayEffectDuration, 5000);
+test('yesterday preview effect uses strict thresholds and a ten-second cycle', () => {
+  assert.equal(yesterdayEffectDuration, 10000);
   for (const cost of [0, 10, NaN, Infinity]) assert.equal(yesterdayEffectFrame(cost, 1000, 1000), null);
   assert.deepEqual(yesterdayEffectFrame(10.001, 1000, 1000), { tone: 'warm', delayMs: 0 });
   assert.deepEqual(yesterdayEffectFrame(20, 1000, 2000), { tone: 'warm', delayMs: -1000 });
   assert.deepEqual(yesterdayEffectFrame(20.001, 1000, 5999), { tone: 'hot', delayMs: -4999 });
-  assert.equal(yesterdayEffectFrame(25, 1000, 6000), null);
-  assert.equal(yesterdayEffectFrame(25, 1000, 9000), null);
+  assert.equal(yesterdayEffectFrame(25, 1000, 6000).delayMs, -5000);
+  assert.equal(yesterdayEffectFrame(25, 1000, 9000).delayMs, -8000);
+  assert.equal(yesterdayEffectFrame(25, 1000, 11000).delayMs, 0);
 });
 
-test('yesterday preview resumes the remaining time after replacement instead of restarting', () => {
+test('yesterday preview resumes active or quiet phases after replacement instead of restarting', () => {
   const start = 100;
   assert.equal(yesterdayEffectFrame(25, start, 100).delayMs, 0);
   assert.equal(yesterdayEffectFrame(25, start, 3100).delayMs, -3000);
-  assert.equal(yesterdayEffectFrame(25, start, 5100), null);
-  assert.equal(yesterdayEffectFrame(25, start, 60100), null);
+  assert.equal(yesterdayEffectFrame(25, start, 5100).delayMs, -5000);
+  assert.equal(yesterdayEffectFrame(25, start, 60100).delayMs, 0);
+  assert.equal(yesterdayEffectFrame(25, start, 60500).delayMs, -400);
 });
 
 test('preview orbit clocks stay on the persistent grid and inherit into replacement tiles', async () => {

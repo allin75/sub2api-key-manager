@@ -376,3 +376,133 @@ html { scrollbar-gutter:stable; }
 @media(prefers-reduced-motion:reduce) {
   .usage-popover,.usage-connector,.usage-chart-dot,.key-card { transition:none; }
 }
+
+/* Usage tile effects: clocks stay on the grid across card rebuilds. */
+@property --usage-warm-angle {
+  syntax:'<angle>';
+  initial-value:0deg;
+  inherits:true;
+}
+
+@property --usage-hot-angle {
+  syntax:'<angle>';
+  initial-value:0deg;
+  inherits:true;
+}
+
+/* Keep clocks on the persistent grid so rebuilding a tile cannot restart them. */
+.key-grid {
+  animation:usage-today-warm-orbit 4.8s linear infinite,usage-today-hot-orbit 3.4s linear infinite;
+}
+
+.period:has(> strong.usage-today-warm) {
+  --usage-tile-angle:var(--usage-warm-angle);
+  --usage-tile-edge:#ffe6a1;
+  --usage-tile-aura:#ffbe4270;
+  --usage-tile-speed:4.8s;
+  border-color:#a77c35;
+  background:radial-gradient(ellipse at 12% 0%,#e8ac3338,transparent 85%),#111a29;
+  box-shadow:inset 0 0 0.75rem #e8ac3314,0 0 0.875rem #e8ac3333;
+}
+
+.period:has(> strong.usage-today-hot) {
+  --usage-tile-angle:var(--usage-hot-angle);
+  --usage-tile-edge:#ffc5cf;
+  --usage-tile-aura:#ff5c7a99;
+  --usage-tile-speed:3.4s;
+  border-color:#c75e6c;
+  background:radial-gradient(ellipse at 12% 0%,#ff65783b,transparent 85%),#1a1626;
+  box-shadow:inset 0 0 0.75rem #ff65781a;
+}
+
+.period:has(> strong:is(.usage-today-warm,.usage-today-hot)) {
+  position:relative;
+  isolation:isolate;
+}
+
+.period:has(> strong:is(.usage-today-warm,.usage-today-hot))::before {
+  content:'';
+  position:absolute;
+  inset:-1px;
+  border-radius:inherit;
+  padding:2px;
+  background:conic-gradient(from var(--usage-tile-angle),transparent 0% 58%,#ffffff18 70%,var(--usage-tile-edge) 83%,#fff 86%,transparent 92% 100%);
+  -webkit-mask:linear-gradient(#fff 0 0) content-box,linear-gradient(#fff 0 0);
+  -webkit-mask-composite:xor;
+  mask:linear-gradient(#fff 0 0) content-box,linear-gradient(#fff 0 0);
+  mask-composite:exclude;
+  pointer-events:none;
+}
+
+.period:has(> strong:is(.usage-today-warm,.usage-today-hot))::after {
+  content:'';
+  position:absolute;
+  inset:-1px;
+  border-radius:inherit;
+  box-shadow:0 0 0.875rem var(--usage-tile-aura),0 0 1.5rem var(--usage-tile-aura);
+  pointer-events:none;
+  animation:usage-today-tile-halo var(--usage-tile-speed) ease-in-out infinite;
+}
+
+@keyframes usage-today-warm-orbit {
+  from { --usage-warm-angle:0deg; }
+  to { --usage-warm-angle:360deg; }
+}
+
+@keyframes usage-today-hot-orbit {
+  from { --usage-hot-angle:0deg; }
+  to { --usage-hot-angle:360deg; }
+}
+
+@keyframes usage-today-tile-halo {
+  0%,100% { opacity:0.3; }
+  50% { opacity:0.85; }
+}
+
+@property --usage-yesterday-strength {
+  syntax:'<number>';
+  initial-value:0;
+  inherits:true;
+}
+
+.period.usage-yesterday-warm { --usage-yesterday-ink:#f5ce73; --usage-yesterday-rgb:245 206 115; }
+.period.usage-yesterday-hot { --usage-yesterday-ink:#ff8e9a; --usage-yesterday-rgb:255 101 120; }
+.period:is(.usage-yesterday-warm,.usage-yesterday-hot) {
+  position:relative;
+  isolation:isolate;
+  animation:usage-yesterday-fade 10s ease-in-out infinite both;
+  animation-delay:var(--usage-yesterday-delay,0ms);
+}
+.period:is(.usage-yesterday-warm,.usage-yesterday-hot)::after {
+  content:'';
+  position:absolute;
+  inset:-1px;
+  border:1px solid var(--usage-yesterday-ink);
+  border-radius:inherit;
+  background:radial-gradient(ellipse at 12% 0%,rgb(var(--usage-yesterday-rgb) / 0.25),transparent 85%);
+  box-shadow:inset 0 0 0.5rem rgb(var(--usage-yesterday-rgb) / 0.12),0 0 1rem rgb(var(--usage-yesterday-rgb) / 0.55);
+  opacity:var(--usage-yesterday-strength);
+  pointer-events:none;
+  z-index:-1;
+}
+.period:is(.usage-yesterday-warm,.usage-yesterday-hot) > strong {
+  color:color-mix(in srgb,var(--text),var(--usage-yesterday-ink) calc(var(--usage-yesterday-strength) * 100%));
+  text-shadow:0 0 0.625rem rgb(var(--usage-yesterday-rgb) / calc(var(--usage-yesterday-strength) * 0.6));
+}
+@keyframes usage-yesterday-fade {
+  0% { --usage-yesterday-strength:0; }
+  4% { --usage-yesterday-strength:1; }
+  11% { --usage-yesterday-strength:0.18; }
+  18% { --usage-yesterday-strength:0.62; }
+  25% { --usage-yesterday-strength:0.1; }
+  32% { --usage-yesterday-strength:0.3; }
+  40% { --usage-yesterday-strength:0.06; }
+  50%,100% { --usage-yesterday-strength:0; }
+}
+
+@media (prefers-reduced-motion:reduce) {
+  .key-grid { animation:none; }
+  .period:has(> strong:is(.usage-today-warm,.usage-today-hot))::before { animation:none; background:var(--usage-tile-edge); opacity:0.65; }
+  .period:has(> strong:is(.usage-today-warm,.usage-today-hot))::after { animation:none; opacity:0.5; }
+  .period:is(.usage-yesterday-warm,.usage-yesterday-hot) { animation:none; --usage-yesterday-strength:0; }
+}
