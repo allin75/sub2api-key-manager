@@ -11,6 +11,9 @@ for(const id of ['accessManagement','accessTotals','accessSearch','accessList','
 for(const id of ['transferOverlay','transferForm','transferDescription','transferTarget','transferError','closeTransferButton','cancelTransferButton','saveTransferButton']) elements[id]=document.getElementById(id);
 let transferKeyId='';
 for(const id of ['budgetType','accessType','rewardList','openRewardButton','rewardOverlay','rewardForm','rewardAmount','rewardExpiry','rewardError','closeRewardButton','cancelRewardButton','saveRewardButton'])elements[id]=document.getElementById(id);
+for(const id of ['budgetSelect','budgetTypeTrigger','budgetTypeValue','budgetTypeMenu','budgetNextSection','budgetNextInput','budgetNextEffective','budgetPolicyHint','budgetInputLabel'])elements[id]=document.getElementById(id);
+let budgetEditor = null;
+let budgetEditVersion = 0;
 for (const id of ['sessionLoading','loginButton','topbar','announcementSlot','announcementSurface','openAnnouncementButton','announcementDot','announcementDialog','announcementShade','announcementTitle','announcementHint','announcementBody','announcementError','closeAnnouncementButton','acknowledgeAnnouncementButton']) elements[id] = document.getElementById(id);
 const activeUiAnimations = new Set();
 for (const id of ['syncProgress','syncHistory','syncHistoryList']) elements[id] = document.getElementById(id);
@@ -377,6 +380,39 @@ elements.closeBudgetButton.addEventListener('click',closeBudget);
 elements.cancelBudgetButton.addEventListener('click',closeBudget);
 elements.budgetOverlay.addEventListener('click',event=>{if(event.target===elements.budgetOverlay)closeBudget()});
 elements.budgetForm.addEventListener('submit',saveBudget);
+elements.budgetTypeTrigger.addEventListener('click',()=>{
+  const open=elements.budgetTypeMenu.classList.contains('hidden');
+  elements.budgetTypeMenu.classList.toggle('hidden',!open);
+  elements.budgetTypeTrigger.setAttribute('aria-expanded',String(open));
+  if(open)elements.budgetTypeMenu.querySelector('[aria-selected="true"]').focus();
+});
+elements.budgetTypeMenu.querySelectorAll('[data-budget-type]').forEach(button=>button.addEventListener('click',()=>{
+  elements.budgetType.value=button.dataset.budgetType;updateBudgetFields();closeBudgetMenu();elements.budgetTypeTrigger.focus();
+}));
+document.addEventListener('click',event=>{if(!elements.budgetSelect.contains(event.target))closeBudgetMenu();});
+elements.budgetForm.addEventListener('keydown',event=>{
+  if(!elements.budgetTypeMenu.classList.contains('hidden')){
+    if(event.key==='Escape'){event.preventDefault();event.stopPropagation();closeBudgetMenu();elements.budgetTypeTrigger.focus();return;}
+    if(['ArrowDown','ArrowUp','Home','End'].includes(event.key)){
+      event.preventDefault();
+      const options=[...elements.budgetTypeMenu.querySelectorAll('[data-budget-type]')],i=options.indexOf(document.activeElement);
+      options[event.key==='Home'?0:event.key==='End'?options.length-1:(i+(event.key==='ArrowDown'?1:-1)+options.length)%options.length].focus();return;
+    }
+    if(event.key==='Tab')closeBudgetMenu();
+  }
+  if(event.key==='Escape'){event.preventDefault();closeBudget();}
+  if(event.key==='Tab'){
+    const focusable=[...elements.budgetForm.querySelectorAll('button,input')].filter(el=>!el.disabled&&el.getClientRects().length);
+    if(event.shiftKey&&document.activeElement===focusable[0]){event.preventDefault();focusable.at(-1).focus();}
+    else if(!event.shiftKey&&document.activeElement===focusable.at(-1)){event.preventDefault();focusable[0].focus();}
+  }
+});
+elements.budgetForm.querySelectorAll('[data-budget-input]').forEach(button=>button.addEventListener('click',()=>{
+  const input=elements[button.dataset.budgetInput];
+  if(input.disabled)return;
+  if(button.dataset.step==='up')input.stepUp();else input.stepDown();
+  input.dispatchEvent(new Event('input',{bubbles:true}));
+}));
 
 async function boot() {
   const version = viewVersion;
@@ -500,7 +536,7 @@ function showLogin() {
   elements.password.disabled = false;
   closeUsagePreview();
   resetSyncUi();
-  closeBudget(); closeAdd(); closeQuota(true); closeAccess(); closeTransfer(); closeReward(); closeNoticeComposer();
+  closeBudget(true); closeAdd(); closeQuota(true); closeAccess(); closeTransfer(); closeReward(); closeNoticeComposer();
   state.loadVersion++;
   state.csrfToken='';state.keys=[];state.budget=null;state.accessKeys=[];state.accessKey=null;state.selectedAccessId='';state.rewards=[];state.sorting=false;elements.rewardList.innerHTML='';
   elements.accessList.innerHTML='';elements.accessTotals.innerHTML='';elements.currentAccess.textContent='';elements.usageSummary.innerHTML='';elements.keyGrid.innerHTML='';
@@ -758,9 +794,9 @@ function renderSummary(){
   const b=state.budget;
   elements.usageSummary.innerHTML=`<div class="summary-item balance-item"><div class="balance-heading"><span>余额</span>${state.role==='superadmin'?'<button class="quota-edit" id="editBudget">设置</button>':''}</div><div class="balance-value"><strong>${b?.limit==null?'未设置':b.balance===null?'待同步':money(b.balance)}</strong>${b?.limit!=null?`<span>/ ${money(b.limit)}</span>`:''}</div></div>`+usagePeriods.map(([id,label])=>`<div class="summary-item"><span>${label}</span><strong>${state.keys.some(k=>!k.usage?.[id])?'—':money(totals[id])}</strong></div>`).join('');
   const label=b?.type==='trial'?'体验总额度':'月度总额度';
-  document.getElementById('editBudget')?.addEventListener('click',()=>{elements.budgetType.value=b?.type||'monthly';elements.budgetInput.value=b?.limit??'';elements.budgetError.textContent='';elements.budgetOverlay.classList.remove('hidden');elements.budgetInput.focus()});
+  document.getElementById('editBudget')?.addEventListener('click',openBudget);
   const details=b?.limit!=null?`${label} · ${b.used===null?'用量待同步':`已计入 ${money(b.used)}`}${b.overage>0?` · 超出 ${money(b.overage)}`:''} · ${b.type==='trial'?'不自动刷新':b.monthlyResetEnabled?`下月刷新 ${formatTime(b.nextMonthAt)}`:'月刷新关闭 · 已用量持续累计'}`:'原额度由超级管理员设置后启用';
-  elements.budgetStatus.textContent=`${b?.status==='blocked'?'原额度已用尽且无可用奖励，已配置 Key 暂停使用。 ':''}${details}${b?.pendingCount?` · ${b.pendingCount} 项状态变更待重试`:''}`;
+  elements.budgetStatus.textContent=`${b?.status==='blocked'?'原额度已用尽且无可用奖励，已配置 Key 暂停使用。 ':''}${details}${b?.type!=='trial'&&b?.nextLimit!=null?` · 下一期 ${money(b.nextLimit)}${b.monthlyResetEnabled?'':'（月刷新关闭，暂不生效）'}`:''}${b?.pendingCount?` · ${b.pendingCount} 项状态变更待重试`:''}`;
   elements.budgetStatus.classList.toggle('budget-blocked',b?.status==='blocked');
   elements.syncStatus.textContent=`数据刷新于：${b?.lastSuccessAt?formatSyncTime(b.lastSuccessAt):'尚未成功刷新'} · 下次尝试：${b?.nextCheckAt?formatSyncTime(b.nextCheckAt):'等待调度'}（北京时间）${b?.error?` · ${b.error}`:''}`;
 }
@@ -801,12 +837,64 @@ function checkBudgetNotification() {
   try { localStorage.setItem(key, '1'); } catch {}
 }
 
-function closeBudget(){elements.budgetOverlay?.classList.add('hidden');}
+function closeBudgetMenu(){elements.budgetTypeMenu.classList.add('hidden');elements.budgetTypeTrigger.setAttribute('aria-expanded','false');}
+function updateBudgetFields(){
+  const trial=elements.budgetType.value==='trial',b=budgetEditor?.budget;
+  elements.budgetTypeValue.textContent=trial?'一次性体验额度':'月度额度';
+  elements.budgetTypeMenu.querySelectorAll('[data-budget-type]').forEach(button=>button.setAttribute('aria-selected',String(button.dataset.budgetType===elements.budgetType.value)));
+  elements.budgetInputLabel.textContent=trial?'体验总额度（USD）':'本期总额度（USD）';
+  elements.budgetNextSection.classList.toggle('hidden',trial);elements.budgetNextInput.disabled=trial;
+  if(!trial){
+    const reset=b?.type==='trial'||b?.monthlyResetEnabled!==false;
+    elements.budgetNextEffective.textContent=reset?`${formatTime(b?.nextMonthAt||nextBudgetMonth())} 生效 · 北京时间`:'月刷新已关闭，开启后的下次月刷新生效';
+  }
+  elements.budgetPolicyHint.textContent=trial?'切换为体验额度从切换时计费，不自动刷新。':'月刷新关闭时已用量持续累计，不执行下一期额度切换。';
+}
+function nextBudgetMonth(){
+  const wall=new Date(Date.now()+8*3600000);
+  return new Date(Date.UTC(wall.getUTCFullYear(),wall.getUTCMonth()+1,1)-8*3600000).toISOString();
+}
+function openBudget(){
+  if(budgetEditor?.busy)return;
+  const b=state.budget;
+  budgetEditor={version:++budgetEditVersion,view:viewVersion,accessId:currentAccess()?.id,budget:structuredClone(b),busy:false};
+  elements.budgetForm.querySelectorAll('button,input').forEach(el=>el.disabled=false);
+  elements.budgetForm.setAttribute('aria-busy','false');
+  setBusy(elements.saveBudgetButton,false,'保存设置');
+  elements.budgetType.value=b?.type||'monthly';elements.budgetInput.value=b?.limit??'';elements.budgetNextInput.value=b?.nextLimit??b?.limit??'';
+  elements.budgetError.textContent='';closeBudgetMenu();updateBudgetFields();
+  elements.budgetOverlay.classList.remove('hidden');elements.budgetInput.focus({preventScroll:true});
+}
+function closeBudget(force=false){
+  if(budgetEditor?.busy&&force!==true)return;
+  const wasOpen=!elements.budgetOverlay.classList.contains('hidden');
+  budgetEditor=null;budgetEditVersion++;closeBudgetMenu();elements.budgetOverlay.classList.add('hidden');
+  if(wasOpen&&force!==true)document.getElementById('editBudget')?.focus({preventScroll:true});
+}
 async function saveBudget(event){
-  event.preventDefault();elements.budgetError.textContent='';setBusy(elements.saveBudgetButton,true,'保存中…');
-  try{await api('/api/budget',{method:'PUT',body:{limit:Number(elements.budgetInput.value),type:elements.budgetType.value}});closeBudget();await loadKeys();toast('原额度设置已保存');}
-  catch(error){elements.budgetError.textContent=error.message;}
-  finally{setBusy(elements.saveBudgetButton,false,'保存总额度');}
+  event.preventDefault();
+  const editor=budgetEditor;
+  if(!editor||editor.busy||!elements.budgetForm.reportValidity())return;
+  const body={limit:Number(elements.budgetInput.value),type:elements.budgetType.value,expectedMonth:editor.budget?.month};
+  if(body.type==='monthly')body.nextLimit=Number(elements.budgetNextInput.value);
+  const current=()=>budgetEditor===editor&&editor.view===viewVersion&&editor.accessId===currentAccess()?.id;
+  editor.busy=true;elements.budgetError.textContent='';closeBudgetMenu();
+  elements.budgetForm.setAttribute('aria-busy','true');
+  elements.budgetForm.querySelectorAll('button,input').forEach(el=>el.disabled=true);
+  setBusy(elements.saveBudgetButton,true,'保存中…');
+  try{
+    const data=await api(`/api/budget?accessKeyId=${encodeURIComponent(editor.accessId)}`,{method:'PUT',body});
+    if(!current())return;
+    closeBudget(true);await loadKeys();
+    if(editor.view===viewVersion&&editor.accessId===currentAccess()?.id)toast(data.budget?.stale?'额度设置已保存，用量与 Key 状态待同步':'原额度设置已保存');
+  }catch(error){if(current())elements.budgetError.textContent=error.message;}
+  finally{
+    if(current()){
+      editor.busy=false;elements.budgetForm.setAttribute('aria-busy','false');
+      elements.budgetForm.querySelectorAll('button,input').forEach(el=>el.disabled=false);
+      updateBudgetFields();setBusy(elements.saveBudgetButton,false,'保存设置');
+    }
+  }
 }
 
 function renderSchedule(){elements.resetCountdown.closest('.schedule-pill').classList.toggle('hidden',!state.schedule?.nextResetAt);if(!state.schedule?.nextResetAt)return;const remaining=Math.max(0,Date.parse(state.schedule.nextResetAt)-Date.now());elements.resetCountdown.textContent=formatCountdown(remaining)}

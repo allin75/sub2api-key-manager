@@ -314,7 +314,7 @@ async function handleApi(request, response, url) {
   }
   if (method === 'PUT' && url.pathname === '/api/budget') {
     const body=await readBody(request);
-    return sendJson(response,200,await manager.setBudget(body.limit,body.type));
+    return sendJson(response,200,await manager.setBudget(body.limit,body.type,body.nextLimit,body.expectedMonth));
   }
   if (method === 'POST' && url.pathname === '/api/keys') {
     const body=await readBody(request);

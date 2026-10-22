@@ -4,6 +4,26 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
+test('next period limits are scoped, validated and preserved across disk reloads',async()=>{
+  const directory=await fs.mkdtemp(path.join(os.tmpdir(),'next-limit-store-'));
+  const prior=process.env.DATA_DIR;process.env.DATA_DIR=directory;
+  try{
+    const store=await import(`../src/store.js?next-limit=${Date.now()}`);await store.loadStore();await store.initializeAccessKeys('demo-one');
+    const snapshot=store.getState(),first=snapshot.accessKeys[0].id;
+    snapshot.accessKeys.push({id:'second',secret:'demo-two',previousSecrets:[],ownedHashes:[],state:structuredClone(store.initialState)});
+    await store.saveState(snapshot);
+    const scoped=store.scopedStore(first),s=scoped.getState();s.budget.nextLimit=123.45;await scoped.saveState(s);
+    const reloaded=await import(`../src/store.js?next-limit-reload=${Date.now()}`);await reloaded.loadStore();
+    assert.equal(reloaded.scopedStore(first).getState().budget.nextLimit,123.45);assert.equal(reloaded.scopedStore('second').getState().budget.nextLimit,undefined);
+    for(const bad of [null,0,-1,'150',Infinity,100000001]){
+      const invalid=reloaded.getState();invalid.accessKeys[0].state.budget.nextLimit=bad;await assert.rejects(reloaded.saveState(invalid),/下一期额度无效/);
+    }
+  }finally{
+    if(prior===undefined)delete process.env.DATA_DIR;else process.env.DATA_DIR=prior;
+    await fs.rm(directory,{recursive:true,force:true});
+  }
+});
+
 test('sync slots and isolated failure history survive reordering and a disk reload',async()=>{
   const directory=await fs.mkdtemp(path.join(os.tmpdir(),'sync-store-'));
   const prior=process.env.DATA_DIR;process.env.DATA_DIR=directory;

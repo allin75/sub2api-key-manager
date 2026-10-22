@@ -97,6 +97,12 @@ test('HTTP roles, CSRF, cache, and budget enforcement through mock Sub2API',asyn
     await request('/api/budget','PUT',{limit:100},superadmin);assert.equal(key.status,'active');
     assert.equal(loginCount,1);
     assert.equal((await request('/api/budget','PUT',{limit:null},superadmin)).status,400);
+    const planned=await (await request('/api/budget','PUT',{limit:100,nextLimit:150},superadmin)).json();
+    assert.equal(planned.budget.limit,100);assert.equal(planned.budget.nextLimit,150);assert.equal(planned.budget.used,50);
+    const legacy=await (await request('/api/budget','PUT',{limit:100},superadmin)).json();assert.equal(legacy.budget.nextLimit,150);
+    for(const nextLimit of [null,0,-1,'150',100000001])assert.equal((await request('/api/budget','PUT',{limit:100,nextLimit},superadmin)).status,400);
+    assert.equal((await request('/api/budget','PUT',{limit:100,nextLimit:200,expectedMonth:'2000-01'},superadmin)).status,409);
+    assert.equal((await request('/api/budget','PUT',{limit:100,nextLimit:200})).status,403);
     // Login keys own independent data; renaming never changes that ownership.
     const listResponse=await request('/api/access-keys','GET',undefined,superadmin);
     assert.equal(listResponse.status,200);
@@ -111,6 +117,7 @@ test('HTTP roles, CSRF, cache, and budget enforcement through mock Sub2API',asyn
     const own=await (await request('/api/keys','GET',undefined,second)).json();
     assert.deepEqual(own.keys,[]);
     assert.equal(own.budget.limit,20);
+    assert.equal(own.budget.nextLimit,null);
     assert.equal((await request(`/api/keys?accessKeyId=${accessKeys[0].id}`,'GET',undefined,second)).status,403);
     assert.equal((await request(`/api/sync-status?accessKeyId=${accessKeys[0].id}`,'GET',undefined,second)).status,403);
     const readsBeforeStatus=readCount;

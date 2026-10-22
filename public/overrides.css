@@ -1,4 +1,44 @@
 html { scrollbar-gutter:stable; }
+#budgetOverlay { z-index:60; }
+.budget-modal { max-height:calc(100dvh - 2.5rem); overflow-y:auto; overscroll-behavior:contain; scrollbar-width:thin; scrollbar-color:#304768 #121f36; }
+.budget-modal .modal-head { margin-bottom:1.375rem; }
+.budget-modal .modal-head p { margin:0; line-height:1.7; }
+.budget-modal svg { display:block; width:1rem; height:1rem; fill:none; stroke:currentColor; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; flex:none; }
+.budget-close { display:grid; place-items:center; flex:none; width:1.875rem; height:1.875rem; padding:0; border:1px solid #ffffff12; border-radius:.4375rem; background:#ffffff04; color:var(--muted); }
+.budget-close:hover { color:var(--text); background:#ffffff0a; }
+.budget-label { display:block; margin-bottom:.4375rem; font-size:.6875rem; color:#c5d4ee; }
+.budget-select { position:relative; margin-bottom:1.375rem; }
+.budget-select-trigger { display:flex; align-items:center; justify-content:space-between; width:100%; min-height:2.875rem; padding:.6875rem .8125rem; border:1px solid #304768; border-radius:.5625rem; background:#091321; color:var(--text); text-align:left; font-size:.875rem; }
+.budget-select-trigger:hover { border-color:#56709a; }
+.budget-select-trigger svg { color:var(--muted); transition:transform .16s; }
+.budget-select-trigger[aria-expanded="true"] { border-color:var(--blue); box-shadow:0 0 0 .1875rem #739dff12; }
+.budget-select-trigger[aria-expanded="true"] svg { transform:rotate(180deg); }
+.budget-select-menu { position:absolute; top:calc(100% + .4375rem); left:0; right:0; z-index:2; padding:.3125rem; border:1px solid #405b83; border-radius:.625rem; background:#15233b; box-shadow:0 1rem 2.5rem #0007; }
+.budget-select-menu button { display:flex; align-items:center; justify-content:space-between; width:100%; padding:.6875rem .625rem; border:0; border-radius:.375rem; background:transparent; color:var(--text); text-align:left; font-size:.8125rem; }
+.budget-select-menu button[aria-selected="true"] { background:#739dff16; }
+.budget-select-menu button:hover,.budget-select-menu button:focus-visible { background:#233b60; }
+.budget-select-menu small { display:block; margin-top:.25rem; font-size:.6875rem; color:var(--muted); }
+.budget-select-menu svg { color:#91b5ff; }
+.budget-select-menu button[aria-selected="false"] svg { visibility:hidden; }
+.budget-money { display:flex; align-items:center; min-width:0; height:2.875rem; border:1px solid #304768; border-radius:.5625rem; background:#091321; overflow:hidden; }
+.budget-money:focus-within { border-color:var(--blue); box-shadow:0 0 0 .1875rem #739dff12; }
+.budget-money>span { padding-left:.8125rem; color:#7188ab; font-size:.875rem; }
+.budget-modal .budget-money input { width:100%; min-width:0; padding:.6875rem .625rem; margin:0; border:0; border-radius:0; outline:none; background:transparent; box-shadow:none; color:var(--text); font-size:.9375rem; font-variant-numeric:tabular-nums; appearance:textfield; }
+.budget-money input::-webkit-inner-spin-button,.budget-money input::-webkit-outer-spin-button { appearance:none; margin:0; }
+.budget-steppers { display:grid; width:2.1875rem; flex:none; align-self:stretch; border-left:1px solid #304768aa; background:#14223a; }
+.budget-steppers button { display:grid; place-items:center; padding:0; border:0; border-radius:0; background:transparent; color:#91aacf; }
+.budget-steppers button+button { border-top:1px solid #304768aa; }
+.budget-steppers button:hover { background:#263d60; color:#d9e7ff; }
+.budget-steppers svg { width:.75rem; height:.75rem; }
+.budget-modal .budget-hint { margin:.5rem 0 0; font-size:.6875rem; line-height:1.8; }
+.budget-next { margin-top:1.4375rem; padding-top:1.25rem; border-top:1px solid #ffffff0c; }
+.budget-modal .budget-effective { margin:.625rem 0 0; color:#9bb5df; font-size:.6875rem; line-height:1.8; }
+.budget-modal .budget-policy { margin:1.125rem 0 0; font-size:.6875rem; line-height:1.8; }
+.budget-modal .budget-policy+.budget-policy { margin-top:.25rem; }
+.budget-modal .form-error:empty { min-height:0; margin:0; }
+.budget-modal .modal-actions { margin-top:1.5rem; }
+.budget-modal button:focus-visible { outline:2px solid var(--blue); outline-offset:2px; }
+.budget-modal button:disabled,.budget-modal input:disabled { opacity:.55; cursor:wait; }
 /* Scale reading dimensions by CSS viewport width, including dialogs outside .shell. */
 @media (min-width:1921px) {
   html { font-size:clamp(16px,calc(4px + .625vw),20px); }

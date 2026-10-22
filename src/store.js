@@ -198,6 +198,7 @@ function validateState(value) {
   )))throw new Error('同步记录无效');
   if (Object.values(value.budget.ledger).some(cost => !Number.isSafeInteger(cost) || cost < 0)) throw new Error('月度费用快照无效');
   const b=value.budget;
+  if(b.nextLimit!==undefined&&(typeof b.nextLimit!=='number'||!Number.isFinite(b.nextLimit)||b.nextLimit<.01||b.nextLimit>1e8||b.type==='trial'))throw new Error('下一期额度无效');
   for(const field of ['weeklyResetEnabled','monthlyResetEnabled'])if(b[field]!==undefined&&typeof b[field]!=='boolean')throw new Error('刷新开关无效');
   if(b.weeklyNotBefore!==undefined&&!Number.isFinite(Date.parse(b.weeklyNotBefore)))throw new Error('周刷新起点无效');
   if(b.cycleMonth!==undefined&&!/^\d{4}-(0[1-9]|1[0-2])$/.test(b.cycleMonth))throw new Error('额度周期无效');

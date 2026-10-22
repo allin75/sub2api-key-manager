@@ -6,6 +6,7 @@ secrets/
 node_modules/
 coverage/
 .playwright-mcp/
+.superpowers/
 *.log
 *.pem
 *.key

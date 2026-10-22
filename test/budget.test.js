@@ -75,6 +75,60 @@ test('month rollover at midnight restores only owned keys and retains limit',asy
   f.costs[1]=0;f.costs[2]=0;f.at('2026-10-01T00:00:00+08:00');await f.m.tick();
   assert.equal(f.m.view().budget.month,'2026-10');assert.equal(f.m.view().budget.balance,50);assert.equal(f.all[0].status,'active');
 });
+test('next limit leaves current usage and ownership unchanged and applies at Shanghai midnight',async()=>{
+  const f=setup('2026-12-31T23:59:00+08:00');f.all[1].status='inactive';
+  await f.m.setBudget(40,'monthly',80,'2026-12');
+  assert.equal(f.m.view().budget.limit,40);assert.equal(f.m.view().budget.used,50);
+  assert.equal(f.m.view().budget.nextLimit,80);assert.equal(f.all[0].status,'inactive');
+  f.at('2026-12-31T23:59:59+08:00');await f.m.tick();assert.equal(f.m.view().budget.limit,40);
+  f.costs[1]=0;f.costs[2]=0;f.at('2027-01-01T00:00:00+08:00');await f.m.tick();
+  assert.equal(f.m.view().budget.limit,80);assert.equal(f.m.view().budget.nextLimit,null);
+  assert.equal(f.m.view().budget.balance,80);assert.deepEqual(f.all.map(k=>k.status),['active','inactive','active']);
+  f.at('2027-02-01T00:00:00+08:00');await f.m.tick();assert.equal(f.m.view().budget.limit,80);
+});
+test('scheduled lower limit is enforced against new-month usage, not the previous balance',async()=>{
+  const f=setup('2026-09-30T20:00:00+08:00');await f.m.setBudget(100,'monthly',10);
+  assert.equal(f.all[0].status,'active');f.costs[1]=10;f.costs[2]=0;
+  f.at('2026-10-01T00:00:00+08:00');await f.m.tick();
+  assert.equal(f.m.view().budget.limit,10);assert.equal(f.m.view().budget.status,'blocked');assert.equal(f.all[0].status,'inactive');
+});
+test('next limit survives restart and skipped months; failed reads never restore keys early',async()=>{
+  const f=setup('2026-09-30T20:00:00+08:00');await f.m.setBudget(40,'monthly',80);
+  f.restart();f.at('2026-11-03T01:00:00+08:00');f.failRead(true);await f.m.tick();
+  assert.equal(f.m.view().budget.limit,80);assert.equal(f.state.budget.nextLimit,undefined);assert.equal(f.all[0].status,'inactive');
+  f.restart();f.failRead(false);f.costs[1]=0;f.costs[2]=0;f.advance(FIVE_MINUTES);await f.m.tick();
+  assert.equal(f.m.view().budget.limit,80);assert.equal(f.all[0].status,'active');
+});
+test('monthly refresh off retains next limit until the next enabled month rollover',async()=>{
+  const f=setup('2026-09-30T20:00:00+08:00');await f.m.setBudget(100,'monthly',200);
+  await f.m.setRefreshPolicy({monthlyResetEnabled:false});
+  f.at('2026-10-01T00:00:00+08:00');await f.m.tick();
+  assert.equal(f.m.view().budget.limit,100);assert.equal(f.m.view().budget.nextLimit,200);
+  await f.m.setRefreshPolicy({monthlyResetEnabled:true});assert.equal(f.m.view().budget.limit,100);
+  f.at('2026-11-01T00:00:00+08:00');await f.m.tick();assert.equal(f.m.view().budget.limit,200);
+});
+test('legacy saves preserve a next limit and switching to trial clears it permanently',async()=>{
+  const f=setup();await f.m.setBudget(100,'monthly',200);await f.m.setBudget(120);
+  assert.equal(f.m.view().budget.nextLimit,200);
+  await f.m.setBudget(120,'trial');assert.equal(f.m.view().budget.nextLimit,null);
+  await f.m.setBudget(150,'monthly');assert.equal(f.m.view().budget.nextLimit,null);
+});
+test('next limit validation and stale-month rejection never modify stored settings',async()=>{
+  const f=setup();await f.m.setBudget(100,'monthly',200);const before=f.state;
+  for(const bad of [null,0,-1,'100',NaN,Infinity,.001,100000001]){
+    await assert.rejects(f.m.setBudget(150,'monthly',bad));assert.deepEqual(f.state,before);
+  }
+  await assert.rejects(f.m.setBudget(150,'trial',200));assert.deepEqual(f.state,before);
+  await assert.rejects(f.m.setBudget(150,'monthly',200,'2026-08'),{status:409});assert.deepEqual(f.state,before);
+  await f.m.setBudget(.01,'monthly',100000000);assert.equal(f.state.budget.nextLimit,100000000);
+});
+test('month rollover persists a next limit even while manual refresh is rate limited',async()=>{
+  const f=setup('2026-09-30T20:00:00+08:00');await f.m.setBudget(100,'monthly',200);
+  const s=f.store.getState();s.cache.rateLimitedUntil='2026-10-01T02:00:00.000Z';await f.store.saveState(s);
+  f.at('2026-10-01T00:00:00+08:00');const result=await f.m.refresh();
+  assert.equal(result.rateLimited,true);assert.equal(f.state.budget.limit,200);assert.equal(f.state.budget.nextLimit,undefined);
+  f.restart();assert.equal(f.m.view().budget.limit,200);
+});
 test('missed month rollover is caught on restart, failures keep retrying at night',async()=>{
   const f=setup('2026-09-30T10:00:00+08:00');await f.m.setBudget(40);f.restart();f.at('2026-10-02T01:00:00+08:00');f.failRead(true);
   await f.m.tick();assert.equal(f.all[0].status,'inactive');assert.equal(f.m.view().budget.balance,null);f.failRead(false);f.costs[1]=0;f.costs[2]=0;f.advance(FIVE_MINUTES);await f.m.tick();assert.equal(f.all[0].status,'active');

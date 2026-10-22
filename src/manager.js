@@ -28,7 +28,11 @@ export class KeyManager {
     if(reset||s.budget.type==='trial'){
       s.budget.rawLedger={};s.budget.rawAnchors={};s.budget.cycleMonth=month;
     }
-    if(reset){s.budget.ledger={};s.budget.rewardHold={};}
+    if(reset){
+      if(s.budget.nextLimit!=null)s.budget.limit=s.budget.nextLimit;
+      delete s.budget.nextLimit;
+      s.budget.ledger={};s.budget.rewardHold={};
+    }
     // Keep blocked/ownership until a complete new-month read permits recovery.
     s.cache.error='新月份用量待同步'; s.cache.nextCheckAt=this.clock().toISOString();
     return true;
@@ -40,7 +44,7 @@ export class KeyManager {
     return {keys:s.configuredKeys.map(c=>s.cache.keys.find(k=>k.id===c.id)||{id:c.id,maskedKey:c.maskedKey,matched:false,error:'等待首次同步'}),
       orderVersion:s.orderVersion||0,rewards:rewardViews(b,now),
       schedule:refreshPolicy(b).weeklyResetEnabled?weeklyResetState(now,ZONE):null, lastResetAt:s.lastResetAt,
-      budget:{type:b.type||'monthly',...refreshPolicy(b),cycleMonth:b.cycleMonth||b.month,trialStartedAt:b.trialStartedAt||null,limit:b.limit,used,balance:b.limit===null||used===null?null:Math.max(0,b.limit-used),overage:b.limit===null||used===null?0:Math.max(0,used-b.limit),month:b.month,
+      budget:{type:b.type||'monthly',...refreshPolicy(b),cycleMonth:b.cycleMonth||b.month,trialStartedAt:b.trialStartedAt||null,limit:b.limit,nextLimit:b.nextLimit??null,used,balance:b.limit===null||used===null?null:Math.max(0,b.limit-used),overage:b.limit===null||used===null?0:Math.max(0,used-b.limit),month:b.month,
         status:b.limit===null?'unset':b.blocked?'blocked':'active',pendingCount:Object.values(b.paused).filter(p=>p.phase!=='disabled').length,
         lastSuccessAt:s.cache.lastSuccessAt,rateLimitedUntil:cooldown,nextCheckAt:cooldown||(!isDaytime(now)&&expired&&!s.actionRetry?nextCheck(now,this.scheduleOffset()):s.actionRetry?s.retryAt:s.cache.nextCheckAt),nextMonthAt:refreshPolicy(b).monthlyResetEnabled?nextMonthAt(now):null,
         stale:!!cooldown || !!s.cache.error || !s.cache.lastSuccessAt || !!expired || b.month!==monthId(now),error:s.cache.error}};
@@ -75,6 +79,7 @@ export class KeyManager {
     if(this.refreshPromise)return this.refreshPromise;
     this.refreshPromise=this.exclusive(async()=>{
       const s=this.store.getState(),changed=this.rollover(s);
+      if(changed)await this.save(s);
       if(this.cooldown(s))return {...this.view(),cached:true,rateLimited:true};
       if(!changed && s.cache.lastAttemptAt && this.clock()-new Date(s.cache.lastAttemptAt)<FIVE_MINUTES) return {...this.view(),cached:true};
       await this.sync(s,{source:'manual'});return this.view();
@@ -226,10 +231,14 @@ export class KeyManager {
     Object.assign(s.budget,patch);
     await this.save(s);await this.sync(s,{allowRestore:false});return this.view();
   });}
-  setBudget(limit,type){return this.exclusive(async()=>{
+  setBudget(limit,type,nextLimit,expectedMonth){return this.exclusive(async()=>{
     if(typeof limit!=='number'||!Number.isFinite(limit)||limit<=0||limit>1e8)throw new ManagerError('月度总额度必须为大于 0 且不超过 100,000,000 的金额');
     const s=this.store.getState();type??=s.budget.type||'monthly';
     if(!['monthly','trial'].includes(type))throw new ManagerError('额度类型无效');
+    if(nextLimit!==undefined&&(typeof nextLimit!=='number'||!Number.isFinite(nextLimit)||nextLimit<.01||nextLimit>1e8))throw new ManagerError('下一期总额度需为 $0.01–$100,000,000');
+    if(type==='trial'&&nextLimit!==undefined)throw new ManagerError('体验额度不支持下一期额度');
+    if(expectedMonth!==undefined&&expectedMonth!==monthId(this.clock()))throw new ManagerError('额度周期已变化，请关闭后重新打开设置',409);
+    this.rollover(s);
     if(type!==(s.budget.type||'monthly')){
       if(!await this.sync(s,{allowRestore:false}))throw new ManagerError('同步失败，未切换额度类型',502);
       s.budget.weeklyResetEnabled=type==='monthly';s.budget.monthlyResetEnabled=type==='monthly';
@@ -241,6 +250,9 @@ export class KeyManager {
         s.resetOperation=null;
       }
     }
+    if(expectedMonth!==undefined&&expectedMonth!==monthId(this.clock()))throw new ManagerError('额度周期已变化，请关闭后重新打开设置',409);
+    if(type==='trial')delete s.budget.nextLimit;
+    else if(nextLimit!==undefined)s.budget.nextLimit=Math.round(nextLimit*100)/100;
     s.budget.type=type;s.budget.rewardHold={};s.budget.limit=Math.round(limit*100)/100;
     if(s.budget.limit<=0)throw new ManagerError('月度总额度最少为 $0.01');
     await this.save(s);await this.sync(s);return this.view();
