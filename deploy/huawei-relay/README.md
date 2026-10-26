@@ -1,11 +1,11 @@
 # 华为云备用访问入口
 
-访问地址：<https://key-direct.1501129.xyz/>。原入口 <https://misekey.1501129.xyz/> 继续使用；两者连接同一个 NAS 程序和同一份业务数据。各入口使用各自的浏览器会话，登录密钥相同。
+当前 IP 访问地址：<https://1.94.7.137:9001/>。原备用域名 <https://key-direct.1501129.xyz/> 的配置保留，用户反馈其需要备案。原入口 <https://misekey.1501129.xyz/> 继续使用；两者连接同一个 NAS 程序和同一份业务数据。各入口使用各自的浏览器会话，登录密钥相同。
 
 ## 连接与配置位置
 
 ```text
-浏览器 → 华为云 Caddy :443 → 127.0.0.1:13100
+浏览器 → 华为云 Caddy HTTPS :9001 → 127.0.0.1:13100
                               ↑ SSH 反向隧道，经 :22
                          NAS 127.0.0.1:3100
 ```
@@ -22,7 +22,7 @@
 | NAS 密钥及基线 | `/home/Sun/.config/sub2api-key-manager-relay/`，目录 0700，私钥 0600，不进 Git |
 | NAS 镜像 | `sub2api-key-manager-ssh-relay:20261016`，Alpine 3.22.6 + OpenSSH 客户端 |
 
-云端网页端口仅为已有的 TCP 80/443；隧道复用 TCP 22，没有新增公开的回源端口。NAS 容器以 1000:1001 身份运行、只读文件系统、移除全部 capabilities、禁止提权。云端 SSH 主机公钥经已有可信 SSH 连接读取后固定，客户端禁止自动接受未知主机公钥。私钥只在 NAS 上生成及保存。
+云端新增公开网页端口 TCP 9001，已有 TCP 80/443 保留；隧道复用 TCP 22，回源端口 13100 仅监听云端回环地址。NAS 容器以 1000:1001 身份运行、只读文件系统、移除全部 capabilities、禁止提权。云端 SSH 主机公钥经已有可信 SSH 连接读取后固定，客户端禁止自动接受未知主机公钥。私钥只在 NAS 上生成及保存。
 
 ## 更新配置
 
@@ -53,7 +53,29 @@ systemctl reload ssh
 
 SSH 账号的 `authorized_keys` 使用 `restrict,port-forwarding,permitlisten="127.0.0.1:13100",command="/bin/false"` 限制专用公钥。`sshd` 的 Match 配置禁止本地转发及交互会话，只允许指定回环监听；不要复用 NAS 管理员或云端 root 私钥。
 
-证书由 Caddy 自动申请及续期，状态保存在 `/var/lib/caddy/`，不要删除该目录。DNS 必须继续直连云端，已有的 TCP 80/443 入站规则必须保留。服务器位于大陆，后续仍应按供应商要求维护域名接入条件。
+域名证书由 Caddy 自动申请及续期，状态保存在 `/var/lib/caddy/`，不要删除该目录。DNS 必须继续直连云端，已有的 TCP 80/443 入站规则必须保留。服务器位于大陆，后续仍应按供应商要求维护域名接入条件。
+
+## IP HTTPS 入口（2026-10-26 核验）
+
+华为云账号为 `GT-sunjun001229`，Flexus L 实例 `Ubuntu-cn-east-3-G69S` 位于华东-上海一，公网 IP 为 `1.94.7.137`。安全组 `sg-default-smb`（`004166ab-b2b1-4cb9-80cc-9e485933595d`）已于 2026-10-26 09:37:53 新增：优先级 1 / 允许 / IPv4 / TCP 9001 / 源 `0.0.0.0/0` / 描述 `Key Manager IP HTTPS 9001`。其他规则保持原样。
+
+云端 `/etc/caddy/Caddyfile` 已有 IP HTTPS 站点，将 `https://1.94.7.137:9001` 反向代理到 `127.0.0.1:13100`，并向 NAS 传递原始 Host 和 HTTPS 协议。全局 `default_sni 1.94.7.137` 用于 IP TLS。仓库 `cloud/Caddyfile` 仍是早期域名配置示例，不能直接覆盖当前云端配置。
+
+IP 证书由 Let's Encrypt 短期证书配置签发，SAN 包含 `1.94.7.137`，由 `/opt/key-ip-acme/bin/certbot` 管理，续期配置位于 `/etc/letsencrypt/renewal/key-ip-1.94.7.137.conf`。Caddy 使用 `/etc/caddy/key-ip-tls/fullchain.pem` 和 `privkey.pem`，权限 root:caddy 0640。`key-ip-cert-renew.timer` 已启用，每日 00:00/12:00 加最长 1800 秒随机延迟检查续期；部署钩子为 `/etc/letsencrypt/renewal-hooks/deploy/key-ip-caddy`。不要删除证书配置、私钥或定时任务，不要将其提交到 Git。
+
+HTTP 80 的 `/.well-known/acme-challenge/` 由 `/var/www/key-ip-acme` 提供，用于 http-01 续期；其余 IP HTTP 请求跳转至 HTTPS 9001。保留该验证路径和 TCP 80 入站规则。
+
+此次仅放行安全组端口，未重新配置 Caddy、证书或 NAS。公网检查：主页 200（本机一次 0.72 秒）、app.js 200、未登录 `/api/session` 401，均未跳过证书验证；Chrome 正常显示登录页。NAS 程序为 1.5.0、running / healthy，专用隧道容器 running。登录密钥与原入口相同，各入口需分别登录。单次请求耗时不代表整页加载速度或其他网络的表现；IP 加端口不保证免除供应商接入或备案要求。
+
+只读排障命令：
+
+```sh
+systemctl status key-ip-cert-renew.timer --no-pager
+systemctl status key-ip-cert-renew.service --no-pager
+curl --connect-timeout 5 --max-time 10 --resolve 1.94.7.137:9001:127.0.0.1 -fsS -o /dev/null https://1.94.7.137:9001/
+```
+
+公网测试时去掉 `--resolve`。停用此 IP 入口时，可先撤销安全组中上述 TCP 9001 规则；原 CF 入口仍可访问。
 
 ## 核验与排障
 
